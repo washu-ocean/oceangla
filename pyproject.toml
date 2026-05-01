@@ -1,0 +1,29 @@
+[project]
+name = "oceangla"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Joey Scanga", email = "scangjo@gmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "nibabel>=5.4.2",
+    "nilearn>=0.13.1",
+    "numpy>=2.2.6",
+    "pandas>=2.3.3",
+    "textual>=8.2.4",
+]
+
+[project.scripts]
+oceangla = "oceangla:main"
+oceangla-tui = "oceangla.tui.tui:main"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[dependency-groups]
+dev = [
+    "ipython>=8.39.0",
+]

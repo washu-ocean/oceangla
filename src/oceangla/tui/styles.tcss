@@ -1,0 +1,24 @@
+Screen {
+  layout: grid;
+  grid-size: 2 1;
+  grid-columns: 1fr 3fr;
+}
+
+OptionsPane {
+  height: 100%;
+}
+
+FLADirsPane {
+  height: 100%;
+}
+
+FLADirsPane FLADirTreeContainer {
+  height: 80%;
+}
+
+.hidden {
+  display: none;
+}
+
+
+
