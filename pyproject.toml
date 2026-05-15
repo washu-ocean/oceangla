@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-oceangla = "oceangla:main"
+oceangla = "oceangla.main:main"
 oceangla-tui = "oceangla.tui.tui:main"
 
 [build-system]
@@ -25,5 +25,6 @@ build-backend = "pdm.backend"
 
 [dependency-groups]
 dev = [
+    "ipdb>=0.13.13",
     "ipython>=8.39.0",
 ]
