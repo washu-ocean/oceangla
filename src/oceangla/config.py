@@ -19,5 +19,5 @@ class config:  # All attributes are set in parser.py parse_args()
     verbose: int = 0
 
     # Store joblib memory cache
-    _memory_cache = None
-    _joblib_memory = None
+    joblib_memory_path = None
+    joblib_memory = None

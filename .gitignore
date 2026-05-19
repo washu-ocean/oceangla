@@ -13,3 +13,5 @@ wheels/
 *.csv
 
 test_out/
+
+.DS_Store

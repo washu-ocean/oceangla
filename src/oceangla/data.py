@@ -18,13 +18,10 @@ def populate_db(fladirs: list[str] | list[Path] | str | Path) -> Path:
         fladirs = [fladirs]
     fladirs = [Path(d) for d in fladirs]
 
-    if config.save_db:
-        db_path = config.outdir_path / ".oceangla.db"
-        if db_path.is_file():
-            db_path.unlink()
-        logger.debug(f"Creating sqlite db file at {db_path}")
-    else:
-        db_path = "file::memory:?cache=shared"
+    db_path = config.outdir_path / ".oceangla.db"
+    if db_path.is_file():
+        db_path.unlink()
+    logger.debug(f"Creating sqlite db file at {db_path}")
     with sqlite3.connect(db_path) as con:
         cur = con.cursor()
         cur.execute("DROP TABLE IF EXISTS subject_activation")
@@ -58,13 +55,6 @@ def populate_db(fladirs: list[str] | list[Path] | str | Path) -> Path:
             } for p in files_of_interest
         )
         cur.executemany("INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :fladir);", db_data)
-
-        cur.execute("""
-        CREATE VIEW distinct_conditions AS
-        SELECT DISTINCT task, condition, suffix, space FROM subject_activation
-        WHERE condition NOT LIKE 'task-%';
-        """)  # last line removes individual run-level mean/trends
-
         df = (
             pd.read_csv(config.var_path, sep="," if config.var_path.suffix == ".csv" else "\t")
             .sort_values(by="subject")

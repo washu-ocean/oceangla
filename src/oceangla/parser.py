@@ -1,8 +1,14 @@
 from argparse import ArgumentParser, ArgumentTypeError
 from importlib import metadata
 from pathlib import Path
+import logging
+
+from joblib import Memory
 
 MODEL_CHOICES = ("ols",)
+
+logger = logging.getLogger(__name__)
+
 
 def _pos_int_or_zero(value):
     try:
@@ -58,7 +64,8 @@ def _get_parser():
                         default=[0.05],
                         help="Alpha level(s) that determine significance in statistical tests.")
     parser.add_argument("--model",
-                        nargs="+",
+                        action="append",
+                        metavar=("FORMULA"),
                         dest="models")
     parser.add_argument("--parcellation_dlabel", "--parcellation-dlabel",
                         nargs="+",
@@ -109,10 +116,6 @@ def _get_parser():
                         Here's an example where each BIDS session name is 'ses-01': ``--session-name 01``. Here's another
                         with different pre- and post- sessions: ``--session-name pre post``. By default, will run
                         for each unique session name.""")
-    parser.add_argument("--save_db", "--save-db",
-                        action="store_true",
-                        dest="save_db",
-                        help="Save database file in output directory specified by `-o`.")
     return parser
 
 
@@ -122,3 +125,8 @@ def parse_args():
     from .config import config
     for k, v in args.__dict__.items():
         setattr(config, k, v)
+    if not config.outdir_path.is_dir():
+        logger.info(f"Outdir not found, creating new outdir at: {config.outdir_path.resolve()!s}")
+        config.outdir_path.mkdir(parents=True, exist_ok=False)
+    config.joblib_memory_path = config.outdir_path / ".oceangla_memory"
+    config.joblib_memory = Memory(config.joblib_memory_path)

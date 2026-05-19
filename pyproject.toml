@@ -12,6 +12,9 @@ dependencies = [
     "nilearn>=0.13.1",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
+    "pathvalidate>=3.3.1",
+    "progressbar2>=4.5.0",
+    "templateflow>=25.1.2",
     "textual>=8.2.4",
 ]
 

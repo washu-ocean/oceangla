@@ -1,14 +1,13 @@
 import logging
 from enum import Enum, auto
 from collections import namedtuple
-from copy import deepcopy
 import sqlite3
 
 from .config import config
-from .parser import MODEL_CHOICES
 
 import numpy as np
 import nibabel as nib
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +26,7 @@ class TokenType(Enum):
     NUMBER = auto()
     LPAREN = auto()
     RPAREN = auto()
+    PIPE = auto()
     ZSCORE = auto()
 
 
@@ -265,68 +265,152 @@ class FormulaParser:
         return node
 
 
+@config.joblib_memory.cache
+def query_depvar(condition,
+                 db_path: str,
+                 space: str = "fsLR",
+                 task: str = None,
+                 session: str = None) -> dict:
+    activation = {}
+    with sqlite3.connect(db_path) as con:
+        cur = con.cursor()
+        query = f"""
+        SELECT path FROM subject_activation
+        WHERE condition='{condition}'
+        AND space='{space}'
+        AND subject IN (SELECT subject FROM indepvar)
+        """
+        if task is not None:
+            query += f"AND task='{task}'"
+        if session is not None:
+            query += f"AND session='{session}'"
+        else:  # Try and get the most common session
+            session, _ = cur.execute(""" SELECT session, COUNT(session) as frequency FROM subject_activation GROUP BY session ORDER BY frequency DESC LIMIT 1 """).fetchone()
+            query += f"AND session='{session}'"
+        query += " ORDER BY subject"
+        print(f"Running query:\n{query}")
+        paths = [row[0] for row in cur.execute(query)]
+        first_img = nib.load(paths[0])
+        print("Loading activation...")
+        if len(first_img.dataobj.shape) == 2:  # CIFTI
+            activation["type"] = "CIFTI"
+            activation["header"] = first_img.header
+            activation["nifti_header"] = first_img.nifti_header
+            activation["activation"] = np.concatenate(
+                [nib.load(path).get_fdata() for path in paths],
+                axis=0
+            )
+        elif len(first_img.dataobj.shape) == 3:  # NIFTI
+            activation["type"] = "NIFTI"
+            activation["affine"] = first_img.header
+            activation["header"] = first_img.nifti_header
+            activation["activation"] = np.concatenate(
+                [nib.load(path).get_fdata()[..., np.newaxis] for path in paths],
+                axis=3
+            )
+        elif len(first_img.dataobj.shape) == 4:  # NIFTI
+            activation["type"] = "NIFTI"
+            activation["affine"] = first_img.header
+            activation["header"] = first_img.nifti_header
+            activation["activation"] = np.concatenate(
+                [nib.load(path).get_fdata() for path in paths],
+                axis=3
+            )
+        else:
+            raise ValueError(f"Number of axes for image at path {paths[0]} must be 2 (for CIFTI) 3, or 4 (for NIFTI), but contains {len(first_img.dataobj.shape)}")
+        return activation
+
+
 def get_activation(formula: str,
                    db_path: str,
                    space: str = "fsLR",
                    task: str = None,
-                   session: str = None,) -> np.ndarray:
+                   session: str = None,) -> dict:
     """
     Return a Numpy array representing group activation specified by the left-hand side
     of the formula.
     """
+    activations = {}
+    final_activation = {}
+    depvar_tree = FormulaParser(formula).tree[0]
+
+    def _query_activation(condition, scalar=1) -> dict:
+        activation = query_depvar(condition, db_path, space, task, session)
+        activation["activation"] *= scalar
+        return activation
+
     def _eval_node(node):
         if _is_scaled_value_node(node):
             (sign, scalar), condition = node
             sign, scalar, condition = sign.value, scalar.value, condition.value
             scalar_int = int(f"{sign}{scalar}")
             activations[condition] = _query_activation(condition, scalar=scalar_int)
+            if not final_activation:
+                for key in activations[condition].keys():
+                    if key != "activation":
+                        final_activation[key] = activations[condition][key]
             return condition
         else:
             raise NotImplementedError("Can only handle scaled nodes in depvar as of now")
 
-    def _query_activation(condition, scalar=1) -> dict:
-        activation = {}
-        with sqlite3.connect(db_path) as con:
-            cur = con.cursor()
-            query = f"""
-            SELECT path FROM subject_activation
-            WHERE condition='{condition}'
-            AND space='{space}'
-            """
-            if task is not None:
-                query += f"AND task='{task}'"
-            if session is not None:
-                query += f"AND session='{session}'"
-            query += "ORDER BY subject"
-            print(f"Running query:\n{query}")
-            paths = [row[0] for row in cur.execute(query)]
-            first_img = nib.load(paths[0])
-            print("Loading activation...")
-            if len(first_img.dataobj.shape) == 2:  # CIFTI
-                activation["header"] = first_img.header
-                activation["nifti_header"] = first_img.nifti_header
-                activation["activation"] = np.concatenate(
-                    [nib.load(path).get_fdata() for path in paths],
-                    axis=0
-                )
-            elif len(first_img.dataobj.shape) == 4:  # NIFTI
-                activation["affine"] = first_img.header
-                activation["header"] = first_img.nifti_header
-                activation["activation"] = np.concatenate(
-                    [nib.load(path).get_fdata() for path in paths],
-                    axis=3
-                )
-            else:
-                raise ValueError(f"Number of axes for image at path {paths[0]} must be 2 (for CIFTI) or 4 (for NIFTI), but contains {len(first_img.dataobj.shape)}")
-            activation["activation"] *= scalar
-            return activation
-
-    activations = {}
-    tree = FormulaParser(formula).tree[0]
-
-    for node in tree:
+    for node in depvar_tree:
         _eval_node(node)
 
-    return np.squeeze(np.sum(np.concatenate([
+    final_activation["activation"] = np.squeeze(np.sum(np.concatenate([
         activation["activation"][np.newaxis, ...] for activation in activations.values()
     ]), axis=0))
+
+    return final_activation
+
+
+def get_design_matrix(formula: str,
+                      db_path: str) -> pd.DataFrame:
+    columns_to_query = []
+    indeptree = FormulaParser(formula).tree[1]
+
+    def _eval_node(node):
+        if isinstance(node, Token) and node.type == TokenType.INTERCEPT:
+            return
+        elif _is_scaled_value_node(node):
+            (sign, scalar), varname = node
+            sign, scalar, varname = sign.value, scalar.value, varname.value
+            columns_to_query.append(f"{sign}{scalar} * {varname} AS {varname}")
+        elif isinstance(node, list) and node[0].type == TokenType.MUL:  # full interaction
+            for node2 in node[1:]:
+                (sign, scalar), varname = node2
+                sign, scalar, varname = sign.value, scalar.value, varname.value
+                if not (subquery := f"{sign}{scalar} * {varname} AS {varname}") in columns_to_query:
+                    columns_to_query.append(subquery)
+            columns_to_query.append(" * ".join([f"({sign.value}{scalar.value} * {varname.value})" for (sign, scalar), varname in node[1:]]))
+            columns_to_query[-1] += " AS interaction_" + '_'.join(varname.value for (_, _), varname in node[1:])
+        elif isinstance(node, list) and node[0].type == TokenType.INTERACTION:  # just interaction term
+            columns_to_query.append(" * ".join([f"({sign.value}{scalar.value} * {varname.value})" for (sign, scalar), varname in node[1:]]))
+            columns_to_query[-1] += " AS interaction_" + '_'.join(varname.value for (_, _), varname in node[1:])
+        else:
+            raise NotImplementedError("Can only handle scaled nodes in depvar as of now")
+
+    for node in indeptree:
+        _eval_node(node)
+
+    query = (
+        "SELECT " +
+        ",".join(columns_to_query) +
+        " FROM indepvar WHERE subject IN (SELECT subject FROM subject_activation) ORDER BY subject"
+    )
+    with sqlite3.connect(db_path) as con:
+        df = pd.read_sql_query(query, con)
+    df["intercept"] = 1
+    cols = ["intercept"] + [c for c in df.columns if c != "intercept"]  # rearrange so intercept is first
+    df = df[cols]
+    return df
+
+    # with sqlite3.connect(db_path) as con:
+    #     cur = con.cursor()
+    #     query = f"""
+    #     SELECT {varname} FROM indepvar
+    #     WHERE subject IN (SELECT subject FROM subject_activation)
+    #     ORDER BY subject
+    #     """
+    #     print(f"Running query:\n{query}")
+    #     var_col = pd.Series([varname[0] for varname in cur.execute(query)])
+    #     return var_col
