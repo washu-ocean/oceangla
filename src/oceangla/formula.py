@@ -2,6 +2,7 @@ import logging
 from enum import Enum, auto
 from collections import namedtuple
 import sqlite3
+from pprint import pformat
 
 from .config import config
 
@@ -265,18 +266,38 @@ class FormulaParser:
         return node
 
 
+def print_unique_conditions(cur: str):
+    unique_conditions = [row[0] for row in cur.execute("SELECT DISTINCT condition FROM subject_activation").fetchall()]
+    print(f"unique conditions:\n{pformat(unique_conditions)}")
+
+
+def print_unique_tasks(cur: str):
+    unique_tasks = [row[0] for row in cur.execute("SELECT DISTINCT task FROM subject_activation").fetchall()]
+    print(f"unique tasks:\n{pformat(unique_tasks)}")
+
+
+def print_unique_sessions(cur: str):
+    unique_sessions = [row[0] for row in cur.execute("SELECT DISTINCT session FROM subject_activation").fetchall()]
+    print(f"unique sessions:\n{pformat(unique_sessions)}")
+
+
+def print_unique_spaces(cur: str):
+    unique_spaces = [row[0] for row in cur.execute("SELECT DISTINCT space FROM subject_activation").fetchall()]
+    print(f"unique spaces:\n{pformat(unique_spaces)}")
+
+
 @config.joblib_memory.cache
 def query_depvar(condition,
                  db_path: str,
                  space: str = "fsLR",
                  task: str = None,
                  session: str = None) -> dict:
-    activation = {}
+    activation = {"space": space}
     with sqlite3.connect(db_path) as con:
         cur = con.cursor()
         query = f"""
         SELECT path FROM subject_activation
-        WHERE condition='{condition}'
+        WHERE (condition='{condition}' OR condition='{condition.replace("_", "-")}')
         AND space='{space}'
         AND subject IN (SELECT subject FROM indepvar)
         """
@@ -290,7 +311,15 @@ def query_depvar(condition,
         query += " ORDER BY subject"
         print(f"Running query:\n{query}")
         paths = [row[0] for row in cur.execute(query)]
-        first_img = nib.load(paths[0])
+        try:
+            first_img = nib.load(paths[0])
+        except IndexError:
+            print("Query failed.")
+            print_unique_conditions(cur)
+            print_unique_sessions(cur)
+            print_unique_tasks(cur)
+            print_unique_spaces(cur)
+            exit()
         print("Loading activation...")
         if len(first_img.dataobj.shape) == 2:  # CIFTI
             activation["type"] = "CIFTI"
@@ -302,16 +331,16 @@ def query_depvar(condition,
             )
         elif len(first_img.dataobj.shape) == 3:  # NIFTI
             activation["type"] = "NIFTI"
-            activation["affine"] = first_img.header
-            activation["header"] = first_img.nifti_header
+            activation["affine"] = first_img.affine
+            activation["header"] = first_img.header
             activation["activation"] = np.concatenate(
                 [nib.load(path).get_fdata()[..., np.newaxis] for path in paths],
                 axis=3
             )
         elif len(first_img.dataobj.shape) == 4:  # NIFTI
             activation["type"] = "NIFTI"
-            activation["affine"] = first_img.header
-            activation["header"] = first_img.nifti_header
+            activation["affine"] = first_img.affine
+            activation["header"] = first_img.header
             activation["activation"] = np.concatenate(
                 [nib.load(path).get_fdata() for path in paths],
                 axis=3

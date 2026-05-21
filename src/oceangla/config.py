@@ -9,7 +9,9 @@ class config:  # All attributes are set in parser.py parse_args()
     fladir_paths: list[Path] = None
     indepvar: list[str] = None
     models: list[str] = None
+    model_names: list[str] = None
     outdir_path: Path = None
+    reindex: bool = False
     perms: int = 0
     preprocdir_paths: list[Path] = None
     session_name: list[str] = None

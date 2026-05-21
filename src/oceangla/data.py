@@ -13,14 +13,27 @@ from .config import config
 logger = logging.getLogger(__name__)
 
 
-def populate_db(fladirs: list[str] | list[Path] | str | Path) -> Path:
+# TODO: call this validate_db() function if we don't want to reindex,
+# just to make sure all required tables are present
+#
+# Maybe we should have a table containing the fla directories that were
+# indexed, and check against that before deciding not to reindex?
+def validate_db():
+    pass
+
+
+def populate_db(fladirs: list[str] | list[Path] | str | Path,
+                reindex: bool = False) -> Path:
     if isinstance(fladirs, (str, Path)):
         fladirs = [fladirs]
     fladirs = [Path(d) for d in fladirs]
 
     db_path = config.outdir_path / ".oceangla.db"
     if db_path.is_file():
-        db_path.unlink()
+        if reindex:
+            db_path.unlink()
+        else:
+            return db_path
     logger.debug(f"Creating sqlite db file at {db_path}")
     with sqlite3.connect(db_path) as con:
         cur = con.cursor()

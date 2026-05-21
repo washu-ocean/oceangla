@@ -67,6 +67,17 @@ def _get_parser():
                         action="append",
                         metavar=("FORMULA"),
                         dest="models")
+    parser.add_argument("--model_name", "--model-name",
+                        action="append",
+                        metavar=("MODEL_NAME"),
+                        dest="model_names",
+                        help="A short identifier for each model you specify. There must be as many names as there are models defined, "
+                        "and they will be assigned in the same order as models are specified. The outputs for each model will be stored "
+                        "in a folder named after this, under the folder specified by `-o`.")
+    parser.add_argument("--reindex",
+                        action="store_true",
+                        help="Recreate the sqlite database of first-level outputs if one "
+                        "already exists.")
     parser.add_argument("--parcellation_dlabel", "--parcellation-dlabel",
                         nargs="+",
                         type=Path,
