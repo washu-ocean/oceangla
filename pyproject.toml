@@ -30,4 +30,5 @@ build-backend = "pdm.backend"
 dev = [
     "ipdb>=0.13.13",
     "ipython>=8.39.0",
+    "pyright>=1.1.409",
 ]

@@ -1,11 +1,9 @@
-from pathlib import Path
 import logging
-import sqlite3
 import re
+import sqlite3
+from pathlib import Path
+from collections import defaultdict
 
-import numpy as np
-import nibabel as nib
-from joblib import Memory, Parallel, delayed
 import pandas as pd
 
 from .config import config
@@ -22,9 +20,41 @@ def validate_db():
     pass
 
 
-def populate_db(fladirs: list[str] | list[Path] | str | Path,
-                reindex: bool = False) -> Path:
-    if isinstance(fladirs, (str, Path)):
+def __build_path_row(p: Path) -> dict:
+    keys_to_check = (
+        "path",
+        "suffixes",
+        "fladir",
+        "subject",
+        "session",
+        "task",
+        "condition",
+        "space",
+    )
+    row = defaultdict(str)
+    row["path"] = str(p)
+    row["suffixes"] = "".join(p.suffixes)
+    row["fladir"] = str(p.parent.parent.parent.parent.resolve())
+    if match := re.search(r"sub-([a-zA-Z0-9]+)_", p.name):
+        row["subject"] = match.group(1)
+    if match := re.search(r"ses-([a-zA-Z0-9]+)_", p.name):
+        row["session"] = match.group(1)
+    if match := re.search(r"task-([a-zA-Z0-9]+)_", p.name):
+        row["task"] = match.group(1)
+    if match := re.search(r"condition-([a-zA-Z0-9\-]+)_", p.name):
+        row["condition"] = match.group(1)
+    if match := re.search(r"space-([a-zA-Z0-9\-]+)_", p.name):
+        row["space"] = match.group(1)
+    if not all((k in row.keys() for k in keys_to_check)):
+        raise ValueError(
+            f"Could not index path {p.resolve()} "
+            f"in database -- missing keys {','.join([k for k in keys_to_check if k not in row.keys()])}"
+        )
+    return row
+
+
+def populate_db(fladirs: list[Path] | str | Path, reindex: bool = False) -> Path:
+    if isinstance(fladirs, Path):
         fladirs = [fladirs]
     fladirs = [Path(d) for d in fladirs]
 
@@ -53,28 +83,26 @@ def populate_db(fladirs: list[str] | list[Path] | str | Path,
         files_of_interest = []
 
         for fladir in fladirs:
-            files_of_interest.extend(fladir.glob("sub-*/ses-*/func/*condition*stat-effect_boldmap*"))
+            files_of_interest.extend(
+                fladir.glob("sub-*/ses-*/func/*condition*stat-effect_boldmap*")
+            )
 
-        db_data = (
-            {
-                "subject": re.search(r'sub-([a-zA-Z0-9]+)_', p.name).group(1),
-                "session": re.search(r'ses-([a-zA-Z0-9]+)_', p.name).group(1),
-                "task": re.search(r'task-([a-zA-Z0-9]+)_', p.name).group(1),
-                "path": str(p),
-                "condition": re.search(r'condition-([a-zA-Z0-9\-]+)_', p.name).group(1),
-                "suffix": ''.join(p.suffixes),
-                "space": re.search(r'space-([a-zA-Z0-9\-]+)_', p.name).group(1),
-                "fladir": str(p.parent.parent.parent.parent.resolve())
-            } for p in files_of_interest
+        db_data = (__build_path_row(p) for p in files_of_interest)
+        cur.executemany(
+            "INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :fladir);",
+            db_data,
         )
-        cur.executemany("INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :fladir);", db_data)
         df = (
-            pd.read_csv(config.var_path, sep="," if config.var_path.suffix == ".csv" else "\t")
+            pd.read_csv(
+                config.var_path, sep="," if config.var_path.suffix == ".csv" else "\t"
+            )
             .sort_values(by="subject")
             .reset_index(drop=True)
         )
         if "subject" not in df.columns:
-            raise ValueError(f"Missing required column 'subject' from {config.var_path.resolve()!s}")
+            raise ValueError(
+                f"Missing required column 'subject' from {config.var_path.resolve()!s}"
+            )
         df.to_sql(name="indepvar", con=con)
         con.commit()
 

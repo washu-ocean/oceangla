@@ -1,14 +1,14 @@
 import logging
-from enum import Enum, auto
-from collections import namedtuple
 import sqlite3
+from collections import namedtuple
+from enum import Enum, auto
 from pprint import pformat
 
-from .config import config
-
-import numpy as np
 import nibabel as nib
+import numpy as np
 import pandas as pd
+
+from .config import config
 
 logger = logging.getLogger(__name__)
 
@@ -37,31 +37,38 @@ INTERCEPT_TOKEN = Token(type=TokenType.INTERCEPT, value="1")
 
 def lex_formula_str(formula_str: str) -> list[Token]:
     if "~" not in formula_str:
-        raise ValueError("Invalid model spec; must include char '~' to separate dependent from independent variables.")
+        raise ValueError(
+            "Invalid model spec; must include char '~' to separate dependent from independent variables."
+        )
     elif formula_str.count("~") != 1:
-        raise ValueError("Invalid model spec; dependent/independent variable separator '~' can only be included once.")
+        raise ValueError(
+            "Invalid model spec; dependent/independent variable separator '~' can only be included once."
+        )
     pos = 0
 
     tokens = []
 
     def is_var_char(c: str):
         return c.isalnum() or c in "_"
+
     while pos < len(formula_str):
         if formula_str[pos].isspace():
             pos += 1
         elif formula_str[pos] in "+-*:()~":
-            tokens.append(Token(
-                {
-                    "+": TokenType.PLUS,
-                    "-": TokenType.MINUS,
-                    "*": TokenType.MUL,
-                    ":": TokenType.INTERACT,
-                    "(": TokenType.LPAREN,
-                    ")": TokenType.RPAREN,
-                    "~": TokenType.TILDE
-                }[formula_str[pos]],
-                formula_str[pos]
-            ))
+            tokens.append(
+                Token(
+                    {
+                        "+": TokenType.PLUS,
+                        "-": TokenType.MINUS,
+                        "*": TokenType.MUL,
+                        ":": TokenType.INTERACT,
+                        "(": TokenType.LPAREN,
+                        ")": TokenType.RPAREN,
+                        "~": TokenType.TILDE,
+                    }[formula_str[pos]],
+                    formula_str[pos],
+                )
+            )
             pos += 1
         elif is_var_char(formula_str[pos]):
             varname = ""
@@ -69,17 +76,11 @@ def lex_formula_str(formula_str: str) -> list[Token]:
                 varname += formula_str[pos]
                 pos += 1
             if varname.isdigit():
-                tokens.append(Token(
-                    TokenType.NUMBER, varname
-                ))
+                tokens.append(Token(TokenType.NUMBER, varname))
             else:
-                tokens.append(Token(
-                    TokenType.VAR, varname
-                ))
+                tokens.append(Token(TokenType.VAR, varname))
         else:
-            tokens.append(Token(
-                TokenType.INVALID, formula_str[pos]
-            ))
+            tokens.append(Token(TokenType.INVALID, formula_str[pos]))
             pos += 1
     return tokens
 
@@ -107,14 +108,15 @@ def _get_depvars_from_tokens(tokens) -> list[str]:
     pos = 0
     depvars = []
     while pos < len(tokens):
-        if tokens[pos].type in (
-            TokenType.PLUS,
-            TokenType.MINUS
-        ):
+        if tokens[pos].type in (TokenType.PLUS, TokenType.MINUS):
             if not pos + 1 < len(tokens):
-                raise ValueError(f"Cannot have token '{tokens[pos].value}' at end of depvar.")
+                raise ValueError(
+                    f"Cannot have token '{tokens[pos].value}' at end of depvar."
+                )
             if not tokens[pos + 1].type == TokenType.VAR:
-                raise ValueError(f"Illegal token after '{tokens[pos].value}' : '{tokens[pos + 1].value}'")
+                raise ValueError(
+                    f"Illegal token after '{tokens[pos].value}' : '{tokens[pos + 1].value}'"
+                )
             depvars.append(f"{tokens[pos].value}{tokens[pos + 1].value}")
             pos += 2
         elif tokens[pos].type == TokenType.VAR and len(depvars) == 0:
@@ -134,24 +136,33 @@ class UnexpectedTokenError(Exception):
 
 
 def _is_scaled_value_node(node):
-    return all((
-        isinstance(node, tuple),
-        len(node) == 2,
-        isinstance(node[0][0], Token) and node[0][0].type in (TokenType.PLUS, TokenType.MINUS),
-        isinstance(node[0][1], Token) and node[0][1].type == TokenType.NUMBER,
-        isinstance(node[1], Token) and node[1].type == TokenType.VAR,
-    ))
+    return all(
+        (
+            isinstance(node, tuple),
+            len(node) == 2,
+            isinstance(node[0][0], Token)
+            and node[0][0].type in (TokenType.PLUS, TokenType.MINUS),
+            isinstance(node[0][1], Token) and node[0][1].type == TokenType.NUMBER,
+            isinstance(node[1], Token) and node[1].type == TokenType.VAR,
+        )
+    )
 
 
 class FormulaParser:
     def __init__(self, tokens):
         self.pos = 0
-        if isinstance(tokens, list) and len(tokens) > 0 and isinstance(tokens[0], Token):
+        if (
+            isinstance(tokens, list)
+            and len(tokens) > 0
+            and isinstance(tokens[0], Token)
+        ):
             self.tokens = tokens
         elif isinstance(tokens, str):
             self.tokens = lex_formula_str(tokens)
         else:
-            raise TypeError(f"`tokens` should be of type str or list[Token], received: {type(tokens)}")
+            raise TypeError(
+                f"`tokens` should be of type str or list[Token], received: {type(tokens)}"
+            )
         self.tree = self.parse()
 
     def __str__(self):
@@ -168,11 +179,17 @@ class FormulaParser:
             elif _is_scaled_value_node(node):
                 s += f"({node[0][0].value}{node[0][1].value}){node[1].value} "
             elif isinstance(node, list) and node[0].type == TokenType.MUL:
-                childnodes = [f"({childnode[0][0].value}{childnode[0][1].value}){childnode[1].value}" for childnode in node[1:]]
+                childnodes = [
+                    f"({childnode[0][0].value}{childnode[0][1].value}){childnode[1].value}"
+                    for childnode in node[1:]
+                ]
                 interaction_term = ":".join(childnodes)
                 s += " ".join([*childnodes, interaction_term])
             elif isinstance(node, list) and node[0].type == TokenType.INTERACT:
-                childnodes = [f"({childnode[0][0].value}{childnode[0][1].value}){childnode[1].value}" for childnode in node[1:]]
+                childnodes = [
+                    f"({childnode[0][0].value}{childnode[0][1].value}){childnode[1].value}"
+                    for childnode in node[1:]
+                ]
                 interaction_term = ":".join(childnodes)
                 s += f" {interaction_term} "
         return s.strip()
@@ -182,7 +199,11 @@ class FormulaParser:
         self.pos = 0
 
     def peek(self):
-        return self.tokens[self.pos] if self.pos < len(self.tokens) else Token(type=TokenType.INVALID, value="")
+        return (
+            self.tokens[self.pos]
+            if self.pos < len(self.tokens)
+            else Token(type=TokenType.INVALID, value="")
+        )
 
     def consume(self):
         token = self.peek()
@@ -205,8 +226,13 @@ class FormulaParser:
     def unscaled_var(self):
         if self.peek().type in (TokenType.PLUS, TokenType.MINUS, TokenType.LPAREN):
             return self.scaled_var()
-        elif self.peek().type == TokenType.VAR:  # Scale by positive 1 when no scalar present
-            op = (Token(type=TokenType.PLUS, value="+"), Token(type=TokenType.NUMBER, value="1"))
+        elif (
+            self.peek().type == TokenType.VAR
+        ):  # Scale by positive 1 when no scalar present
+            op = (
+                Token(type=TokenType.PLUS, value="+"),
+                Token(type=TokenType.NUMBER, value="1"),
+            )
             varname = self.consume()
             return (op, varname)
         else:
@@ -226,7 +252,11 @@ class FormulaParser:
             return (sign, scalar)
         elif self.peek().type == TokenType.LPAREN:
             self.consume()
-            if not self.peek().type in (TokenType.PLUS, TokenType.MINUS, TokenType.NUMBER):
+            if self.peek().type not in (
+                TokenType.PLUS,
+                TokenType.MINUS,
+                TokenType.NUMBER,
+            ):
                 raise UnexpectedTokenError(self)
             if self.peek().type == TokenType.NUMBER:
                 sign = Token(type=TokenType.PLUS, value="+")
@@ -267,31 +297,49 @@ class FormulaParser:
 
 
 def print_unique_conditions(cur: str):
-    unique_conditions = [row[0] for row in cur.execute("SELECT DISTINCT condition FROM subject_activation").fetchall()]
+    unique_conditions = [
+        row[0]
+        for row in cur.execute(
+            "SELECT DISTINCT condition FROM subject_activation"
+        ).fetchall()
+    ]
     print(f"unique conditions:\n{pformat(unique_conditions)}")
 
 
 def print_unique_tasks(cur: str):
-    unique_tasks = [row[0] for row in cur.execute("SELECT DISTINCT task FROM subject_activation").fetchall()]
+    unique_tasks = [
+        row[0]
+        for row in cur.execute(
+            "SELECT DISTINCT task FROM subject_activation"
+        ).fetchall()
+    ]
     print(f"unique tasks:\n{pformat(unique_tasks)}")
 
 
 def print_unique_sessions(cur: str):
-    unique_sessions = [row[0] for row in cur.execute("SELECT DISTINCT session FROM subject_activation").fetchall()]
+    unique_sessions = [
+        row[0]
+        for row in cur.execute(
+            "SELECT DISTINCT session FROM subject_activation"
+        ).fetchall()
+    ]
     print(f"unique sessions:\n{pformat(unique_sessions)}")
 
 
 def print_unique_spaces(cur: str):
-    unique_spaces = [row[0] for row in cur.execute("SELECT DISTINCT space FROM subject_activation").fetchall()]
+    unique_spaces = [
+        row[0]
+        for row in cur.execute(
+            "SELECT DISTINCT space FROM subject_activation"
+        ).fetchall()
+    ]
     print(f"unique spaces:\n{pformat(unique_spaces)}")
 
 
 @config.joblib_memory.cache
-def query_depvar(condition,
-                 db_path: str,
-                 space: str = "fsLR",
-                 task: str = None,
-                 session: str = None) -> dict:
+def query_depvar(
+    condition, db_path: str, space: str = "fsLR", task: str = None, session: str = None
+) -> dict:
     activation = {"space": space}
     with sqlite3.connect(db_path) as con:
         cur = con.cursor()
@@ -306,7 +354,9 @@ def query_depvar(condition,
         if session is not None:
             query += f"AND session='{session}'"
         else:  # Try and get the most common session
-            session, _ = cur.execute(""" SELECT session, COUNT(session) as frequency FROM subject_activation GROUP BY session ORDER BY frequency DESC LIMIT 1 """).fetchone()
+            session, _ = cur.execute(
+                """ SELECT session, COUNT(session) as frequency FROM subject_activation GROUP BY session ORDER BY frequency DESC LIMIT 1 """
+            ).fetchone()
             query += f"AND session='{session}'"
         query += " ORDER BY subject"
         print(f"Running query:\n{query}")
@@ -326,35 +376,36 @@ def query_depvar(condition,
             activation["header"] = first_img.header
             activation["nifti_header"] = first_img.nifti_header
             activation["activation"] = np.concatenate(
-                [nib.load(path).get_fdata() for path in paths],
-                axis=0
+                [nib.load(path).get_fdata() for path in paths], axis=0
             )
         elif len(first_img.dataobj.shape) == 3:  # NIFTI
             activation["type"] = "NIFTI"
             activation["affine"] = first_img.affine
             activation["header"] = first_img.header
             activation["activation"] = np.concatenate(
-                [nib.load(path).get_fdata()[..., np.newaxis] for path in paths],
-                axis=3
+                [nib.load(path).get_fdata()[..., np.newaxis] for path in paths], axis=3
             )
         elif len(first_img.dataobj.shape) == 4:  # NIFTI
             activation["type"] = "NIFTI"
             activation["affine"] = first_img.affine
             activation["header"] = first_img.header
             activation["activation"] = np.concatenate(
-                [nib.load(path).get_fdata() for path in paths],
-                axis=3
+                [nib.load(path).get_fdata() for path in paths], axis=3
             )
         else:
-            raise ValueError(f"Number of axes for image at path {paths[0]} must be 2 (for CIFTI) 3, or 4 (for NIFTI), but contains {len(first_img.dataobj.shape)}")
+            raise ValueError(
+                f"Number of axes for image at path {paths[0]} must be 2 (for CIFTI) 3, or 4 (for NIFTI), but contains {len(first_img.dataobj.shape)}"
+            )
         return activation
 
 
-def get_activation(formula: str,
-                   db_path: str,
-                   space: str = "fsLR",
-                   task: str = None,
-                   session: str = None,) -> dict:
+def get_activation(
+    formula: str,
+    db_path: str,
+    space: str = "fsLR",
+    task: str = None,
+    session: str = None,
+) -> dict:
     """
     Return a Numpy array representing group activation specified by the left-hand side
     of the formula.
@@ -380,20 +431,29 @@ def get_activation(formula: str,
                         final_activation[key] = activations[condition][key]
             return condition
         else:
-            raise NotImplementedError("Can only handle scaled nodes in depvar as of now")
+            raise NotImplementedError(
+                "Can only handle scaled nodes in depvar as of now"
+            )
 
     for node in depvar_tree:
         _eval_node(node)
 
-    final_activation["activation"] = np.squeeze(np.sum(np.concatenate([
-        activation["activation"][np.newaxis, ...] for activation in activations.values()
-    ]), axis=0))
+    final_activation["activation"] = np.squeeze(
+        np.sum(
+            np.concatenate(
+                [
+                    activation["activation"][np.newaxis, ...]
+                    for activation in activations.values()
+                ]
+            ),
+            axis=0,
+        )
+    )
 
     return final_activation
 
 
-def get_design_matrix(formula: str,
-                      db_path: str) -> pd.DataFrame:
+def get_design_matrix(formula: str, db_path: str) -> pd.DataFrame:
     columns_to_query = []
     indeptree = FormulaParser(formula).tree[1]
 
@@ -404,32 +464,60 @@ def get_design_matrix(formula: str,
             (sign, scalar), varname = node
             sign, scalar, varname = sign.value, scalar.value, varname.value
             columns_to_query.append(f"{sign}{scalar} * {varname} AS {varname}")
-        elif isinstance(node, list) and node[0].type == TokenType.MUL:  # full interaction
+        elif (
+            isinstance(node, list) and node[0].type == TokenType.MUL
+        ):  # full interaction
             for node2 in node[1:]:
                 (sign, scalar), varname = node2
                 sign, scalar, varname = sign.value, scalar.value, varname.value
-                if not (subquery := f"{sign}{scalar} * {varname} AS {varname}") in columns_to_query:
+                if (
+                    subquery := f"{sign}{scalar} * {varname} AS {varname}"
+                ) not in columns_to_query:
                     columns_to_query.append(subquery)
-            columns_to_query.append(" * ".join([f"({sign.value}{scalar.value} * {varname.value})" for (sign, scalar), varname in node[1:]]))
-            columns_to_query[-1] += " AS interaction_" + '_'.join(varname.value for (_, _), varname in node[1:])
-        elif isinstance(node, list) and node[0].type == TokenType.INTERACTION:  # just interaction term
-            columns_to_query.append(" * ".join([f"({sign.value}{scalar.value} * {varname.value})" for (sign, scalar), varname in node[1:]]))
-            columns_to_query[-1] += " AS interaction_" + '_'.join(varname.value for (_, _), varname in node[1:])
+            columns_to_query.append(
+                " * ".join(
+                    [
+                        f"({sign.value}{scalar.value} * {varname.value})"
+                        for (sign, scalar), varname in node[1:]
+                    ]
+                )
+            )
+            columns_to_query[-1] += " AS interaction_" + "_".join(
+                varname.value for (_, _), varname in node[1:]
+            )
+        elif (
+            isinstance(node, list) and node[0].type == TokenType.INTERACTION
+        ):  # just interaction term
+            columns_to_query.append(
+                " * ".join(
+                    [
+                        f"({sign.value}{scalar.value} * {varname.value})"
+                        for (sign, scalar), varname in node[1:]
+                    ]
+                )
+            )
+            columns_to_query[-1] += " AS interaction_" + "_".join(
+                varname.value for (_, _), varname in node[1:]
+            )
         else:
-            raise NotImplementedError("Can only handle scaled nodes in depvar as of now")
+            raise NotImplementedError(
+                "Can only handle scaled nodes in depvar as of now"
+            )
 
     for node in indeptree:
         _eval_node(node)
 
     query = (
-        "SELECT " +
-        ",".join(columns_to_query) +
-        " FROM indepvar WHERE subject IN (SELECT subject FROM subject_activation) ORDER BY subject"
+        "SELECT "
+        + ",".join(columns_to_query)
+        + " FROM indepvar WHERE subject IN (SELECT subject FROM subject_activation) ORDER BY subject"
     )
     with sqlite3.connect(db_path) as con:
         df = pd.read_sql_query(query, con)
     df["intercept"] = 1
-    cols = ["intercept"] + [c for c in df.columns if c != "intercept"]  # rearrange so intercept is first
+    cols = ["intercept"] + [
+        c for c in df.columns if c != "intercept"
+    ]  # rearrange so intercept is first
     df = df[cols]
     return df
 

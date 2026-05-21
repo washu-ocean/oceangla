@@ -1,12 +1,15 @@
 from pathlib import Path
-import asyncio
 
-from textual.widgets import Footer, Label, ListItem, ListView, Header, Log, Static, DirectoryTree, Tree
-from textual.widgets._tree import TreeNode
-from textual.widgets._directory_tree import DirEntry
+from textual.binding import Binding, BindingType
 from textual.containers import Container
-from textual.binding import BindingType, Binding
 from textual.message import Message
+from textual.widgets import (
+    DirectoryTree,
+    Footer,
+    Log,
+)
+from textual.widgets._directory_tree import DirEntry
+from textual.widgets._tree import TreeNode
 
 
 class FolderChoosingDirectoryTree(DirectoryTree):
@@ -45,9 +48,7 @@ class FolderChoosingDirectoryTree(DirectoryTree):
             show=False,
         ),
         Binding("up", "cursor_up", "Cursor Up", show=False),
-        Binding(
-            "down", "cursor_down", "Cursor Down", show=False
-        ),
+        Binding("down", "cursor_down", "Cursor Down", show=False),
     ]
 
     class DirectoryChose(Message):
@@ -58,10 +59,10 @@ class FolderChoosingDirectoryTree(DirectoryTree):
 
 
 class FolderChooser(Container):
-    dir_tree = FolderChoosingDirectoryTree(Path('.').resolve())
+    dir_tree = FolderChoosingDirectoryTree(Path(".").resolve())
     chosen_dir = None
 
     def compose(self):
         yield self.dir_tree
-        yield Log(id='folder-chooser-log')
+        yield Log(id="folder-chooser-log")
         yield Footer()

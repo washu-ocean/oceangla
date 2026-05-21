@@ -1,29 +1,32 @@
 from pathlib import Path
 
-import numpy as np
 import nibabel as nib
+import numpy as np
 
 
-def extract_hemi_values(values_full: np.ndarray,
-                        hdr: nib.cifti2.cifti2.Cifti2Header,
-                        nL: int,
-                        nR: int) -> tuple[np.ndarray, np.ndarray]:
+def extract_hemi_values(
+    values_full: np.ndarray, hdr: nib.cifti2.cifti2.Cifti2Header, nL: int, nR: int
+) -> tuple[np.ndarray, np.ndarray]:
     bm_axis = hdr.get_axis(1)
     L_vals = np.full((*values_full.shape[:-1], nL), np.nan, dtype=np.float32)
     R_vals = np.full((*values_full.shape[:-1], nR), np.nan, dtype=np.float32)
     seen_structures = []
-    for (name, slc, bmodel) in bm_axis.iter_structures():
+    for name, slc, bmodel in bm_axis.iter_structures():
         if name == "CIFTI_STRUCTURE_CORTEX_LEFT":
             seen_structures.append(name)
             vidx = bmodel.vertex.astype(np.int64)
             if np.max(vidx) >= nL:
-                raise RuntimeError(f"Left surface has {nL} verts but CIFTI references vertex {np.max(vidx)}. Wrong L_surf?")
+                raise RuntimeError(
+                    f"Left surface has {nL} verts but CIFTI references vertex {np.max(vidx)}. Wrong L_surf?"
+                )
             L_vals[..., vidx] = values_full[..., slc].astype(np.float32)
         elif name == "CIFTI_STRUCTURE_CORTEX_RIGHT":
             seen_structures.append(name)
             vidx = bmodel.vertex.astype(np.int64)
             if np.max(vidx) >= nR:
-                raise RuntimeError(f"Right surface has {nR} verts but CIFTI references vertex {np.max(vidx)}. Wrong R_surf?")
+                raise RuntimeError(
+                    f"Right surface has {nR} verts but CIFTI references vertex {np.max(vidx)}. Wrong R_surf?"
+                )
             R_vals[..., vidx] = values_full[..., slc].astype(np.float32)
         if len(seen_structures) == 2:
             break
@@ -51,7 +54,9 @@ def build_adjacency_from_faces(n_verts: int, faces: np.ndarray) -> list[np.ndarr
     return [np.fromiter(sorted(s), dtype=np.int32) for s in neigh]
 
 
-def get_cluster_index_groups(mask: np.ndarray, neighbors: list[np.ndarray]) -> list[np.ndarray]:
+def get_cluster_index_groups(
+    mask: np.ndarray, neighbors: list[np.ndarray]
+) -> list[np.ndarray]:
     seen = np.zeros(mask.shape[0], dtype=bool)
     comps = []
     for v in np.where(mask)[0]:
@@ -71,28 +76,66 @@ def get_cluster_index_groups(mask: np.ndarray, neighbors: list[np.ndarray]) -> l
     return comps
 
 
-def get_cluster_sizes_from_pmap(pval: np.ndarray, pthr: float, neighbors: list[np.ndarray], area_map: np.ndarray | None = None) -> list[int]:
+def get_cluster_sizes_from_pmap(
+    pval: np.ndarray,
+    pthr: float,
+    neighbors: list[np.ndarray],
+    area_map: np.ndarray | None = None,
+) -> list[int]:
     if len(pval.shape) == 2:
         cluster_sizes_2d = []
         for beta in range(pval.shape[0]):
-            thresholded_mask = np.squeeze(np.isfinite(pval[beta, :]) & (pval[beta, :] < pthr))
+            thresholded_mask = np.squeeze(
+                np.isfinite(pval[beta, :]) & (pval[beta, :] < pthr)
+            )
             cluster_idx_groups = get_cluster_index_groups(thresholded_mask, neighbors)
             if area_map is not None:
-                cluster_sizes_2d.append(np.array([np.sum(area_map[cluster_idx_group]) for cluster_idx_group in cluster_idx_groups]))
+                cluster_sizes_2d.append(
+                    np.array(
+                        [
+                            np.sum(area_map[cluster_idx_group])
+                            for cluster_idx_group in cluster_idx_groups
+                        ]
+                    )
+                )
             else:
-                cluster_sizes_2d.append(np.array([len(cluster_idx_group) for cluster_idx_group in cluster_idx_groups]))
+                cluster_sizes_2d.append(
+                    np.array(
+                        [
+                            len(cluster_idx_group)
+                            for cluster_idx_group in cluster_idx_groups
+                        ]
+                    )
+                )
         return cluster_sizes_2d
     elif len(pval.shape) == 1:
         thresholded_mask = np.isfinite(pval) & (pval < pthr)
         cluster_idx_groups = get_cluster_index_groups(thresholded_mask, neighbors)
         if area_map is not None:
-            return np.array([np.sum(area_map[cluster_idx_group]) for cluster_idx_group in cluster_idx_groups])
+            return np.array(
+                [
+                    np.sum(area_map[cluster_idx_group])
+                    for cluster_idx_group in cluster_idx_groups
+                ]
+            )
         else:
-            return np.array([len(cluster_idx_group) for cluster_idx_group in cluster_idx_groups])
+            return np.array(
+                [len(cluster_idx_group) for cluster_idx_group in cluster_idx_groups]
+            )
 
 
-def get_biggest_clusters_from_pmap(pval: np.ndarray, pthr: float, neighbors: list[np.ndarray], area_map: np.ndarray | None = None) -> list[int]:
+def get_biggest_clusters_from_pmap(
+    pval: np.ndarray,
+    pthr: float,
+    neighbors: list[np.ndarray],
+    area_map: np.ndarray | None = None,
+) -> list[int]:
     if len(pval.shape) == 2:
-        return [np.max(cluster_sizes) for cluster_sizes in get_cluster_sizes_from_pmap(pval, pthr, neighbors, area_map)]
+        return [
+            np.max(cluster_sizes)
+            for cluster_sizes in get_cluster_sizes_from_pmap(
+                pval, pthr, neighbors, area_map
+            )
+        ]
     elif len(pval.shape) == 1:
         return [np.max(get_cluster_sizes_from_pmap(pval, pthr, neighbors, area_map))]

@@ -1,5 +1,5 @@
-import unittest
 import tempfile
+import unittest
 
 
 class ParserTest(unittest.TestCase):

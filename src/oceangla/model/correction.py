@@ -18,9 +18,9 @@ def _fdr_correct_1d(pvals: np.ndarray, alpha: float = 0.05) -> np.ndarray:
 
 
 def fdr_correct(pvals: np.ndarray, alpha: float = 0.05) -> np.ndarray:
-    '''
+    """
     FDR-correct a pval map
-    '''
+    """
     if pvals.ndim == 2:
         qvals = np.empty_like(pvals)
         for beta in range(pvals.shape[0]):
@@ -29,4 +29,6 @@ def fdr_correct(pvals: np.ndarray, alpha: float = 0.05) -> np.ndarray:
     elif pvals.ndim == 1:
         return _fdr_correct_1d(pvals)
     else:
-        raise np.exceptions.AxisError("We should only have 1 or 2 axes in our pvalue map.")
+        raise np.exceptions.AxisError(
+            "We should only have 1 or 2 axes in our pvalue map."
+        )

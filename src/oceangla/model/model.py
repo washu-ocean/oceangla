@@ -2,9 +2,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
-
-from .cluster import ClusterCorrectionMixin
 
 
 class GroupLevelModelResults(ABC):
@@ -19,17 +16,19 @@ class GroupLevelModelResults(ABC):
 
 class GroupLevelModel(ABC):
     @abstractmethod
-    def __init__(self,
-                 design_matrix: pd.DataFrame,
-                 activation: dict,
-                 model_desc: str,
-                 perms: int = 0,
-                 alpha: float = 0.05,
-                 l_surf_path: Path = None,
-                 r_surf_path: Path = None,
-                 l_area_path: Path = None,
-                 r_area_path: Path = None,
-                 **kwargs):
+    def __init__(
+        self,
+        design_matrix: pd.DataFrame,
+        activation: dict,
+        model_desc: str,
+        perms: int = 0,
+        alpha: float = 0.05,
+        l_surf_path: Path = None,
+        r_surf_path: Path = None,
+        l_area_path: Path = None,
+        r_area_path: Path = None,
+        **kwargs,
+    ):
         self.design_matrix = design_matrix
         self.activation = activation
         self.model_desc = model_desc
@@ -59,7 +58,7 @@ class GroupLevelModel(ABC):
     @abstractmethod
     def _fit_permutation(self) -> GroupLevelModelResults:
         pass
-    
+
     @abstractmethod
     def _get_clusters_from_pvalue_map(self):
         pass

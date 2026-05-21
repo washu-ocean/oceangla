@@ -2,10 +2,15 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult, Widget
 from textual.containers import Container
-from textual.widgets import Footer, Label, ListItem, ListView, Header, Log, Static, DirectoryTree
-from textual.reactive import reactive, var
-
-from .choosefile import FLASourceManager
+from textual.reactive import reactive
+from textual.widgets import (
+    Footer,
+    Header,
+    Label,
+    ListItem,
+    ListView,
+    Static,
+)
 
 
 class ListLabel(ListItem):
@@ -20,7 +25,7 @@ class FolderPicker(Widget):
         (">", "go_into", "Go into highlighted directory"),
         # ("space", "choose", "Choose highlighted directory")
     ]
-    wd = reactive(Path('.'), recompose=True)
+    wd = reactive(Path("."), recompose=True)
     cur_hl_name = reactive(None)
 
     def compose(self) -> ComposeResult:
@@ -33,7 +38,7 @@ class FolderPicker(Widget):
 
     def action_go_up(self):
         try:
-            self.wd = (self.wd / "..")
+            self.wd = self.wd / ".."
         except Exception:
             pass
 
@@ -52,7 +57,9 @@ class OptionsPane(Widget):
 
     def compose(self) -> ComposeResult:
         with ListView():
-            yield ListItem(Label("Manage first-level analysis directories"), id="fla_directories")
+            yield ListItem(
+                Label("Manage first-level analysis directories"), id="fla_directories"
+            )
             yield ListItem(Label("Manage variables"), id="variable_files")
 
     def on_list_view_highlighted(self, event: ListView.Highlighted):
