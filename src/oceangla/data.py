@@ -50,21 +50,19 @@ def __build_path_row(p: Path) -> dict:
             f"Could not index path {p.resolve()} "
             f"in database -- missing keys {','.join([k for k in keys_to_check if k not in row.keys()])}"
         )
+    logger.debug(f"Inserted {p.resolve()!s}")
     return row
 
 
-def populate_db(fladirs: list[Path] | str | Path, reindex: bool = False) -> Path:
-    if isinstance(fladirs, Path):
-        fladirs = [fladirs]
-    fladirs = [Path(d) for d in fladirs]
-
+def populate_db(fladirs: list[Path], reindex: bool = False) -> Path:
     db_path = config.outdir_path / ".oceangla.db"
     if db_path.is_file():
         if reindex:
             db_path.unlink()
         else:
             return db_path
-    logger.debug(f"Creating sqlite db file at {db_path}")
+    logger.debug(f"{'Reindexing' if reindex else 'Creating'} "
+                 f"sqlite db file at {db_path}")
     with sqlite3.connect(db_path) as con:
         cur = con.cursor()
         cur.execute("DROP TABLE IF EXISTS subject_activation")
@@ -92,18 +90,32 @@ def populate_db(fladirs: list[Path] | str | Path, reindex: bool = False) -> Path
             "INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :fladir);",
             db_data,
         )
-        df = (
-            pd.read_csv(
-                config.var_path, sep="," if config.var_path.suffix == ".csv" else "\t"
+        indepvar_dfs = [
+            pd.read_csv(p, sep="," if p.suffix == ".csv" else "\t")
+            for p in config.var_paths
+        ]
+        columns_to_keep = set.intersection(*[set(df.columns) for df in indepvar_dfs])
+        for idx in range(len(indepvar_dfs)):
+            if "subject" not in indepvar_dfs[idx].columns:
+                raise ValueError(
+                    f"Missing required column 'subject' from {config.var_paths[idx].resolve()!s}"
+                )
+            indepvar_dfs[idx]["subject"] = indepvar_dfs[idx]["subject"].astype(str)
+            indepvar_dfs[idx]["subject"].str.replace('sub-', '')
+            indepvar_dfs[idx] = (
+                indepvar_dfs[idx]
+                .drop(columns=[column for column in indepvar_dfs[idx].columns
+                               if column not in columns_to_keep])
+                .sort_values(by="subject")
+                .reset_index(drop=True)
             )
-            .sort_values(by="subject")
-            .reset_index(drop=True)
-        )
-        if "subject" not in df.columns:
-            raise ValueError(
-                f"Missing required column 'subject' from {config.var_path.resolve()!s}"
+        for df in indepvar_dfs:
+            df.to_sql(
+                name="indepvar",
+                con=con,
+                if_exists="append",
+                index=False,
             )
-        df.to_sql(name="indepvar", con=con)
         con.commit()
 
     logger.debug("DB created successfully!")

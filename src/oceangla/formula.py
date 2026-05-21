@@ -345,9 +345,9 @@ def query_depvar(
         cur = con.cursor()
         query = f"""
         SELECT path FROM subject_activation
+        INNER JOIN indepvar ON subject_activation.subject = indepvar.subject
         WHERE (condition='{condition}' OR condition='{condition.replace("_", "-")}')
         AND space='{space}'
-        AND subject IN (SELECT subject FROM indepvar)
         """
         if task is not None:
             query += f"AND task='{task}'"
@@ -358,7 +358,7 @@ def query_depvar(
                 """ SELECT session, COUNT(session) as frequency FROM subject_activation GROUP BY session ORDER BY frequency DESC LIMIT 1 """
             ).fetchone()
             query += f"AND session='{session}'"
-        query += " ORDER BY subject"
+        query += " ORDER BY subject_activation.subject"
         print(f"Running query:\n{query}")
         paths = [row[0] for row in cur.execute(query)]
         try:

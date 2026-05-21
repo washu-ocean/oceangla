@@ -1,6 +1,5 @@
 import logging
 import sys
-import warnings
 from importlib import metadata
 
 
@@ -24,7 +23,7 @@ def main():
     logger.info(f"oceangla {metadata.version('oceangla')}")
     parse_args()
     if config.verbose:
-        logger.setLevel(warnings.DEBUG)
+        logger.setLevel(logging.DEBUG)
 
     config.db_path = populate_db(config.fladir_paths, reindex=config.reindex)
     from .formula import (
