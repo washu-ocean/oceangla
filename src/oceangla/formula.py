@@ -350,9 +350,9 @@ def query_depvar(
         AND space='{space}'
         """
         if task is not None:
-            query += f"AND task='{task}'"
+            query += f"AND task='{task}' "
         if session is not None:
-            query += f"AND session='{session}'"
+            query += f"AND session='{session}' "
         else:  # Try and get the most common session
             session, _ = cur.execute(
                 """ SELECT session, COUNT(session) as frequency FROM subject_activation GROUP BY session ORDER BY frequency DESC LIMIT 1 """
