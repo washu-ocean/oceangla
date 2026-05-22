@@ -155,28 +155,32 @@ class OLSModel:
             max_value=no_of_spatial_slices, redirect_stdout=True
         ) as pbar:
             for spatial_slice in spatial_slices:
-                n, p = design_matrix_arr.shape
-                beta, ssr, rank, s = np.linalg.lstsq(
-                    design_matrix_arr,
-                    np.squeeze(self.activation[spatial_slice]),
-                    rcond=None,
-                )
-                sigma_sq = ssr[0] / (n - p)
-                v_cov = (
-                    np.linalg.inv(design_matrix_arr.T @ design_matrix_arr) * sigma_sq
-                )
-                se = np.sqrt(np.diag(v_cov))
-                tstat = beta / se
-                pval = np.array(
-                    [2 * (1 - stats.t.cdf(np.abs(t), df=n - p)) for t in tstat]
-                )
-                for value_arr, value_vec in (
-                    (betas, beta),
-                    (ses, se),
-                    (tstats, tstat),
-                    (pvals, pval),
-                ):
-                    value_arr[spatial_slice] = value_vec
+                try:
+                    n, p = design_matrix_arr.shape
+                    beta, ssr, rank, s = np.linalg.lstsq(
+                        design_matrix_arr,
+                        np.squeeze(self.activation[spatial_slice]),
+                        rcond=None,
+                    )
+                    sigma_sq = ssr[0] / (n - p)
+                    v_cov = (
+                        np.linalg.inv(design_matrix_arr.T @ design_matrix_arr)
+                        * sigma_sq
+                    )
+                    se = np.sqrt(np.diag(v_cov))
+                    tstat = beta / se
+                    pval = np.array(
+                        [2 * (1 - stats.t.cdf(np.abs(t), df=n - p)) for t in tstat]
+                    )
+                    for value_arr, value_vec in (
+                        (betas, beta),
+                        (ses, se),
+                        (tstats, tstat),
+                        (pvals, pval),
+                    ):
+                        value_arr[spatial_slice] = value_vec
+                except np.linalg.LinAlgError:
+                    continue
                 pbar += 1
         if permuted_design_matrix is not None:
             self.__add_cluster_sizes(pvals)
