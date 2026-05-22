@@ -125,7 +125,7 @@ class OLSModel:
         if self.perms > 0:
             for perm in range(self.perms):
                 print(f"Running permutation {perm + 1} of {self.model_desc}")
-                self._fit(permuted_design_matrix=self.get_permuted_design_matrix())
+                self._fit(permuted_design_matrix=self.__get_permuted_design_matrix())
         print(f"Running {self.model_desc}")
         self._fit()
         self._save()
@@ -396,7 +396,7 @@ class OLSModel:
                 logger.info(f"Saved {p!s}")
                 del img
 
-    def get_permuted_design_matrix(self) -> pd.DataFrame:
+    def __get_permuted_design_matrix(self) -> pd.DataFrame:
         """
         Return DataFrame, which is a copy of self.design_matrix with every column shuffled.
         """
