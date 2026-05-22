@@ -1,8 +1,8 @@
 import logging
 import re
 import sqlite3
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
 
 import pandas as pd
 
@@ -61,8 +61,9 @@ def populate_db(fladirs: list[Path], reindex: bool = False) -> Path:
             db_path.unlink()
         else:
             return db_path
-    logger.debug(f"{'Reindexing' if reindex else 'Creating'} "
-                 f"sqlite db file at {db_path}")
+    logger.debug(
+        f"{'Reindexing' if reindex else 'Creating'} sqlite db file at {db_path}"
+    )
     with sqlite3.connect(db_path) as con:
         cur = con.cursor()
         cur.execute("DROP TABLE IF EXISTS subject_activation")
@@ -101,11 +102,16 @@ def populate_db(fladirs: list[Path], reindex: bool = False) -> Path:
                     f"Missing required column 'subject' from {config.var_paths[idx].resolve()!s}"
                 )
             indepvar_dfs[idx]["subject"] = indepvar_dfs[idx]["subject"].astype(str)
-            indepvar_dfs[idx]["subject"].str.replace('sub-', '')
+            indepvar_dfs[idx]["subject"].str.replace("sub-", "")
             indepvar_dfs[idx] = (
                 indepvar_dfs[idx]
-                .drop(columns=[column for column in indepvar_dfs[idx].columns
-                               if column not in columns_to_keep])
+                .drop(
+                    columns=[
+                        column
+                        for column in indepvar_dfs[idx].columns
+                        if column not in columns_to_keep
+                    ]
+                )
                 .sort_values(by="subject")
                 .reset_index(drop=True)
             )

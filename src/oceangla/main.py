@@ -2,7 +2,6 @@ import logging
 import sys
 from importlib import metadata
 
-
 from .config import config
 from .data import populate_db
 from .model import OLSModel
