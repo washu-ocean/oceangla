@@ -4,13 +4,18 @@ import sqlite3
 from collections import defaultdict
 from pathlib import Path
 
-import pandas as pd
-import numpy as np
 import nibabel as nib
+import numpy as np
+import pandas as pd
 
 from .config import config
-from .error import print_unique_conditions, print_unique_tasks, print_unique_sessions, print_unique_spaces
-from .formula import Token, TokenType, FormulaParser, is_scaled_value_node
+from .error import (
+    print_unique_conditions,
+    print_unique_sessions,
+    print_unique_spaces,
+    print_unique_tasks,
+)
+from .formula import FormulaParser, Token, TokenType, is_scaled_value_node
 
 logger = logging.getLogger(__name__)
 
@@ -200,13 +205,27 @@ def get_activation_and_design_matrix(
         is_null_condition = is_not_null_condition.replace(
             "IS NOT NULL", "IS NULL"
         ).replace("AND", "OR")
-        if len(cur.execute('SELECT name FROM sqlite_master WHERE type = "view" AND name = "subs_with_all_variables"').fetchall()) == 0:
+        if (
+            len(
+                cur.execute(
+                    'SELECT name FROM sqlite_master WHERE type = "view" AND name = "subs_with_all_variables"'
+                ).fetchall()
+            )
+            == 0
+        ):
             cur.execute(f"""
             CREATE VIEW subs_with_all_variables AS
             SELECT DISTINCT indepvar.subject FROM indepvar INNER JOIN subject_activation ON subject_activation.subject = indepvar.subject
             WHERE {is_not_null_condition}
             """)
-        if len(cur.execute('SELECT name FROM sqlite_master WHERE type = "view" AND name = "subs_without_all_variables"').fetchall()) == 0:
+        if (
+            len(
+                cur.execute(
+                    'SELECT name FROM sqlite_master WHERE type = "view" AND name = "subs_without_all_variables"'
+                ).fetchall()
+            )
+            == 0
+        ):
             cur.execute(f"""
             CREATE VIEW subs_without_all_variables AS
             SELECT DISTINCT indepvar.subject FROM indepvar INNER JOIN subject_activation ON subject_activation.subject = indepvar.subject

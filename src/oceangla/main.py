@@ -20,7 +20,11 @@ logger.addHandler(handler)
 def main():
     logger.info(f"oceangla {metadata.version('oceangla')}")
     parse_args()
-    from .data import populate_db, get_activation_and_design_matrix   # importing now to leverage caching activation data
+    from .data import (  # importing now to leverage caching activation data
+        get_activation_and_design_matrix,
+        populate_db,
+    )
+
     if config.verbose:
         logger.setLevel(logging.DEBUG)
 

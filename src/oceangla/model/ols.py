@@ -23,7 +23,7 @@ from .surface_utils import (
     extract_hemi_values,
     get_biggest_clusters_from_pmap,
     get_cluster_index_groups,
-    get_template_midthicknesses_from_cifti_header
+    get_template_midthicknesses_from_cifti_header,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,14 +100,26 @@ class OLSModel:
         self.__biggest_l_surf_cluster_sizes = defaultdict(list)
         self.__biggest_r_surf_cluster_sizes = defaultdict(list)
         if self.image_type == "CIFTI":
-            l_surf_img, r_surf_img = get_template_midthicknesses_from_cifti_header(self.header, self.space)
+            l_surf_img, r_surf_img = get_template_midthicknesses_from_cifti_header(
+                self.header, self.space
+            )
             # breakpoint()
-            self.l_faces, self.r_faces = l_surf_img.darrays[1].data, r_surf_img.darrays[1].data
-            self.l_numverts, self.r_numverts = int(np.max(self.l_faces)) + 1, int(np.max(self.r_faces)) + 1
+            self.l_faces, self.r_faces = (
+                l_surf_img.darrays[1].data,
+                r_surf_img.darrays[1].data,
+            )
+            self.l_numverts, self.r_numverts = (
+                int(np.max(self.l_faces)) + 1,
+                int(np.max(self.r_faces)) + 1,
+            )
             self.l_neigh = build_adjacency_from_faces(self.l_numverts, self.l_faces)
             self.r_neigh = build_adjacency_from_faces(self.r_numverts, self.r_faces)
-        self.l_area = None if l_area_path is None else nib.load(l_area_path).darrays[0].data
-        self.r_area = None if r_area_path is None else nib.load(r_area_path).darrays[0].data
+        self.l_area = (
+            None if l_area_path is None else nib.load(l_area_path).darrays[0].data
+        )
+        self.r_area = (
+            None if r_area_path is None else nib.load(r_area_path).darrays[0].data
+        )
 
     def fit(self):
         if self.perms > 0:

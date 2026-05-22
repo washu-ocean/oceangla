@@ -294,4 +294,3 @@ class FormulaParser:
         while isinstance(node, list) and self.peek().type == node[0].type:
             node.append(self.unscaled_var())
         return node
-
