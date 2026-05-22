@@ -464,11 +464,26 @@ def get_activation_and_design_matrix(
         is_not_null_condition = " AND ".join(
             [f"indepvar.{v.split()[-1].strip()} IS NOT NULL" for v in columns_to_query]
         )
+        is_null_condition = is_not_null_condition.replace("IS NOT NULL", "IS NULL").replace("AND", "OR")
         cur.execute(f"""
         CREATE VIEW subs_with_all_variables AS
-        SELECT indepvar.subject FROM indepvar INNER JOIN subject_activation ON subject_activation.subject = indepvar.subject
+        SELECT DISTINCT indepvar.subject FROM indepvar INNER JOIN subject_activation ON subject_activation.subject = indepvar.subject
         WHERE {is_not_null_condition}
         """)
+        cur.execute(f"""
+        CREATE VIEW subs_without_all_variables AS
+        SELECT DISTINCT indepvar.subject FROM indepvar INNER JOIN subject_activation ON subject_activation.subject = indepvar.subject
+        WHERE {is_null_condition}
+        """)
+        if len(subs_without_variables := [
+            row[0]
+            for row in cur.execute(
+                "SELECT subject FROM subs_without_all_variables"
+            ).fetchall()
+        ]) > 0:
+            logger.warning(
+                "Subjects who have missing data for one or more independent variables: " + ",".join(subs_without_variables)
+            )
         query = (
             "SELECT "
             + ",".join(columns_to_query)
