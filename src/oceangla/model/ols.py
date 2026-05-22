@@ -23,7 +23,7 @@ from .surface_utils import (
     extract_hemi_values,
     get_biggest_clusters_from_pmap,
     get_cluster_index_groups,
-    get_faces_from_gifti_surf,
+    get_template_midthicknesses_from_cifti_header
 )
 
 logger = logging.getLogger(__name__)
@@ -37,10 +37,8 @@ class OLSModel:
         model_desc: str = "nondescript-model",
         perms: int = 0,
         alpha: float | list[float] = 0.05,
-        l_surf_path: str | Path = None,
-        r_surf_path: str | Path = None,
-        l_area_path: str | Path = None,
-        r_area_path: str | Path = None,
+        l_area_path: Path = None,
+        r_area_path: Path = None,
         **kwargs,
     ):
         self.design_matrix = design_matrix
@@ -101,26 +99,15 @@ class OLSModel:
         # surface-specific variables
         self.__biggest_l_surf_cluster_sizes = defaultdict(list)
         self.__biggest_r_surf_cluster_sizes = defaultdict(list)
-        self.no_surfs = l_surf_path is None or r_surf_path is None
-        self.l_surf = None if self.no_surfs else nib.load(l_surf_path)
-        self.r_surf = None if self.no_surfs else nib.load(r_surf_path)
-        self.l_faces = None if self.no_surfs else get_faces_from_gifti_surf(self.l_surf)
-        self.r_faces = None if self.no_surfs else get_faces_from_gifti_surf(self.r_surf)
-        self.l_numverts = None if self.no_surfs else int(np.max(self.l_faces))
-        self.r_numverts = None if self.no_surfs else int(np.max(self.r_faces))
-        self.l_neigh = (
-            None
-            if self.no_surfs
-            else build_adjacency_from_faces(self.l_numverts, self.l_faces)
-        )
-        self.r_neigh = (
-            None
-            if self.no_surfs
-            else build_adjacency_from_faces(self.r_numverts, self.r_faces)
-        )
-        self.no_areas = l_area_path is None or r_area_path is None
-        self.l_area = None if self.no_areas else nib.load(l_area_path).darrays[0].data
-        self.r_area = None if self.no_areas else nib.load(r_area_path).darrays[0].data
+        if self.image_type == "CIFTI":
+            l_surf_img, r_surf_img = get_template_midthicknesses_from_cifti_header(self.header, self.space)
+            # breakpoint()
+            self.l_faces, self.r_faces = l_surf_img.darrays[1].data, r_surf_img.darrays[1].data
+            self.l_numverts, self.r_numverts = int(np.max(self.l_faces)) + 1, int(np.max(self.r_faces)) + 1
+            self.l_neigh = build_adjacency_from_faces(self.l_numverts, self.l_faces)
+            self.r_neigh = build_adjacency_from_faces(self.r_numverts, self.r_faces)
+        self.l_area = None if l_area_path is None else nib.load(l_area_path).darrays[0].data
+        self.r_area = None if r_area_path is None else nib.load(r_area_path).darrays[0].data
 
     def fit(self):
         if self.perms > 0:
@@ -130,7 +117,7 @@ class OLSModel:
         print(f"Running {self.model_desc}")
         self._fit()
         self._save()
-        if self.perms > 0 and self.l_surf is not None and self.r_surf is not None:
+        if self.perms > 0:
             self._cluster_correct()
         self._fdr_correct()
 
@@ -256,15 +243,6 @@ class OLSModel:
 
     def _fdr_correct_nifti(self):
         logger.warning("NIFTI FDR correction not implemented yet.")
-        # fdr_corr_pvals = np.empty((len(self.value_names) * len(self.alphas), self.uncorr_pvals.shape[1]))
-        # for alpha_idx, alpha in enumerate(self.alphas):
-        #     for value_idx in range(self.uncorr_pvals.shape[0]):
-        #         pval_vec = self.uncorr_pvals[value_idx, :].copy()
-        #         pval_vec[np.isnan(pval_vec)] = 1
-        #         fdr_corr_pvals[value_idx * alpha_idx + value_idx, :] = fdr_correct(pval_vec, alpha=alpha)
-        # fdr_corr_pvals_cifti = nib.cifti2.cifti2.Cifti2Image(fdr_corr_pvals, (nib.cifti2.cifti2_axes.ScalarAxis([f"{valname}_{alpha:.4f}" for valname, alpha in itertools.product(self.value_names, self.alphas)]), self.header.get_axis(1)))
-        # nib.save(fdr_corr_pvals_cifti, p := self.model_outdir / f"{sanitize_filename(self.model_desc)}_fdr_corr.dscalar.nii")
-        # logger.info(f"Saved {p!s}")
 
     def _cluster_correct(self):
         if self.image_type == "CIFTI":

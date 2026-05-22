@@ -1,7 +1,27 @@
 from pathlib import Path
+from copy import deepcopy
 
 import nibabel as nib
 import numpy as np
+from templateflow import api as tflow
+
+
+# Not sure how robust this is, but should work for fsLR case at least
+def get_template_midthicknesses_from_cifti_header(header: nib.cifti2.cifti2.Cifti2Header, space: str) -> tuple[nib.cifti2.cifti2.Cifti2Image, nib.cifti2.cifti2.Cifti2Image]:
+    n_verts = np.max(header.get_axis(1).vertex)
+    n_verts_str = f"{(n_verts - (n_verts % 1000)) // 1000}k"  # for example 32k for fsLR
+    l_search_kwargs = {
+        "density": n_verts_str,
+        "hemi": "L",
+        "suffix": "midthickness",
+        "desc": None
+    }
+    r_search_kwargs = deepcopy(l_search_kwargs)
+    r_search_kwargs["hemi"] = "R"
+    l_hem_path, r_hem_path = tflow.get(space, **l_search_kwargs), tflow.get(space, **r_search_kwargs)
+    if isinstance(l_hem_path, list):
+        raise ValueError(f"{'More than 1' if len(l_hem_path) > 0 else 'No'} possible surfaces found for left-hemisphere {': ' + ','.join(l_hem_path) if len(l_hem_path) > 0 else ''}. Searched with following params: " + ','.join([f"{k}={v}" for k, v in l_search_kwargs.items()]))
+    return nib.load(l_hem_path), nib.load(r_hem_path)
 
 
 def extract_hemi_values(
@@ -31,14 +51,6 @@ def extract_hemi_values(
         if len(seen_structures) == 2:
             break
     return L_vals, R_vals
-
-
-def get_faces_from_gifti_surf(surf_path: Path) -> tuple[np.ndarray, np.ndarray]:
-    g = nib.load(str(surf_path))
-    if not isinstance(g, nib.gifti.GiftiImage):
-        raise TypeError(f"Not a GIFTI surface: {surf_path}")
-    faces = g.darrays[1].data
-    return faces
 
 
 def build_adjacency_from_faces(n_verts: int, faces: np.ndarray) -> list[np.ndarray]:
