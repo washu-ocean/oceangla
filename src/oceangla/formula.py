@@ -345,8 +345,7 @@ def query_depvar(
         cur = con.cursor()
         query = f"""
         SELECT path FROM subject_activation
-        INNER JOIN indepvar ON subject_activation.subject = indepvar.subject
-        WHERE (condition='{condition}' OR condition='{condition.replace("_", "-")}')
+        WHERE subject IN subs_with_all_variables AND (condition='{condition}' OR condition='{condition.replace("_", "-")}')
         AND space='{space}'
         """
         if task is not None:
@@ -399,65 +398,18 @@ def query_depvar(
         return activation
 
 
-def get_activation(
+def get_activation_and_design_matrix(
     formula: str,
     db_path: str,
     space: str = "fsLR",
     task: str = None,
     session: str = None,
-) -> dict:
-    """
-    Return a Numpy array representing group activation specified by the left-hand side
-    of the formula.
-    """
-    activations = {}
-    final_activation = {}
-    depvar_tree = FormulaParser(formula).tree[0]
-
-    def _query_activation(condition, scalar=1) -> dict:
-        activation = query_depvar(condition, db_path, space, task, session)
-        activation["activation"] *= scalar
-        return activation
-
-    def _eval_node(node):
-        if _is_scaled_value_node(node):
-            (sign, scalar), condition = node
-            sign, scalar, condition = sign.value, scalar.value, condition.value
-            scalar_int = int(f"{sign}{scalar}")
-            activations[condition] = _query_activation(condition, scalar=scalar_int)
-            if not final_activation:
-                for key in activations[condition].keys():
-                    if key != "activation":
-                        final_activation[key] = activations[condition][key]
-            return condition
-        else:
-            raise NotImplementedError(
-                "Can only handle scaled nodes in depvar as of now"
-            )
-
-    for node in depvar_tree:
-        _eval_node(node)
-
-    final_activation["activation"] = np.squeeze(
-        np.sum(
-            np.concatenate(
-                [
-                    activation["activation"][np.newaxis, ...]
-                    for activation in activations.values()
-                ]
-            ),
-            axis=0,
-        )
-    )
-
-    return final_activation
-
-
-def get_design_matrix(formula: str, db_path: str) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dict]:
+    deptree, indeptree = FormulaParser(formula).tree[0], FormulaParser(formula).tree[1]
     columns_to_query = []
     indeptree = FormulaParser(formula).tree[1]
 
-    def _eval_node(node):
+    def _eval_indep_node(node):
         if isinstance(node, Token) and node.type == TokenType.INTERCEPT:
             return
         elif _is_scaled_value_node(node):
@@ -505,29 +457,65 @@ def get_design_matrix(formula: str, db_path: str) -> pd.DataFrame:
             )
 
     for node in indeptree:
-        _eval_node(node)
+        _eval_indep_node(node)
 
-    query = (
-        "SELECT "
-        + ",".join(columns_to_query)
-        + " FROM indepvar WHERE subject IN (SELECT subject FROM subject_activation) ORDER BY subject"
-    )
     with sqlite3.connect(db_path) as con:
+        cur = con.cursor()
+        is_not_null_condition = " AND ".join(
+            [f"indepvar.{v.split()[-1].strip()} IS NOT NULL" for v in columns_to_query]
+        )
+        cur.execute(f"""
+        CREATE VIEW subs_with_all_variables AS
+        SELECT indepvar.subject FROM indepvar INNER JOIN subject_activation ON subject_activation.subject = indepvar.subject
+        WHERE {is_not_null_condition}
+        """)
+        query = (
+            "SELECT "
+            + ",".join(columns_to_query)
+            + " FROM indepvar WHERE subject IN subs_with_all_variables ORDER BY subject"
+        )
         df = pd.read_sql_query(query, con)
     df["intercept"] = 1
     cols = ["intercept"] + [
         c for c in df.columns if c != "intercept"
     ]  # rearrange so intercept is first
     df = df[cols]
-    return df
+    activations = {}
+    final_activation = {}
 
-    # with sqlite3.connect(db_path) as con:
-    #     cur = con.cursor()
-    #     query = f"""
-    #     SELECT {varname} FROM indepvar
-    #     WHERE subject IN (SELECT subject FROM subject_activation)
-    #     ORDER BY subject
-    #     """
-    #     print(f"Running query:\n{query}")
-    #     var_col = pd.Series([varname[0] for varname in cur.execute(query)])
-    #     return var_col
+    def _query_activation(condition, scalar=1) -> dict:
+        activation = query_depvar(condition, db_path, space, task, session)
+        activation["activation"] *= scalar
+        return activation
+
+    def _eval_depvar_node(node):
+        if _is_scaled_value_node(node):
+            (sign, scalar), condition = node
+            sign, scalar, condition = sign.value, scalar.value, condition.value
+            scalar_int = int(f"{sign}{scalar}")
+            activations[condition] = _query_activation(condition, scalar=scalar_int)
+            if not final_activation:
+                for key in activations[condition].keys():
+                    if key != "activation":
+                        final_activation[key] = activations[condition][key]
+            return condition
+        else:
+            raise NotImplementedError(
+                "Can only handle scaled nodes in depvar as of now"
+            )
+
+    for node in deptree:
+        _eval_depvar_node(node)
+
+    final_activation["activation"] = np.squeeze(
+        np.sum(
+            np.concatenate(
+                [
+                    activation["activation"][np.newaxis, ...]
+                    for activation in activations.values()
+                ]
+            ),
+            axis=0,
+        )
+    )
+    return df, final_activation

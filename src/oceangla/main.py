@@ -26,15 +26,16 @@ def main():
 
     config.db_path = populate_db(config.fladir_paths, reindex=config.reindex)
     from .formula import (
-        get_activation,
-        get_design_matrix,
+        get_activation_and_design_matrix,
     )  # importing now to leverage caching activation data
 
     for model_name, model in zip(config.model_names, config.models):
         space = prompt_space(config.db_path)
         task = prompt_task(config.db_path)
-        activation = get_activation(model, config.db_path, space=space, task=task)
-        design_matrix = get_design_matrix(model, config.db_path)
+        # activation = get_activation(model, config.db_path, space=space, task=task)
+        design_matrix, activation = get_activation_and_design_matrix(
+            model, config.db_path, space=space, task=task
+        )
         OLSModel(
             activation,
             design_matrix,
