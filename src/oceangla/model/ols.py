@@ -149,7 +149,10 @@ class OLSModel:
         spatial_slices, no_of_spatial_slices = get_spatial_slices(
             self.activation, self.image_type, self.volume_mask
         )
-        pvals, tstats, betas, ses = (np.full(img_shape, np.nan, dtype=np.float32),) * 4
+        pvals = np.full(img_shape, np.nan, dtype=np.float32)
+        tstats = np.full(img_shape, np.nan, dtype=np.float32)
+        betas = np.full(img_shape, np.nan, dtype=np.float32)
+        ses = np.full(img_shape, np.nan, dtype=np.float32)
         with progressbar.ProgressBar(
             max_value=no_of_spatial_slices, redirect_stdout=True
         ) as pbar:
