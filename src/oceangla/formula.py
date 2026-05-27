@@ -1,14 +1,7 @@
 import logging
-import sqlite3
 from collections import namedtuple
 from enum import Enum, auto
-from pprint import pformat
 
-import nibabel as nib
-import numpy as np
-import pandas as pd
-
-from .config import config
 
 logger = logging.getLogger(__name__)
 
