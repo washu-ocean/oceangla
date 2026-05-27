@@ -6,6 +6,7 @@ from .config import config
 from .model import OLSModel
 from .parser import parse_args
 from .prompt import prompt_space, prompt_task
+from .formula import parse_model_file
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -29,6 +30,10 @@ def main():
         logger.setLevel(logging.DEBUG)
 
     config.db_path = populate_db(config.fladir_paths, reindex=config.reindex)
+    if config.model_file is not None:
+        file_model_names, file_models = parse_model_file(config.model_file)
+        config.model_names.extend(file_model_names)
+        config.models.extend(file_models)
 
     for model_name, model in zip(config.model_names, config.models):
         space = prompt_space(config.db_path)

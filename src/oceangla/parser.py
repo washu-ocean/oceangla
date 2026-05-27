@@ -1,7 +1,8 @@
 import logging
-from argparse import ArgumentParser, ArgumentTypeError
+from argparse import ArgumentParser, ArgumentTypeError, RawTextHelpFormatter
 from importlib import metadata
 from pathlib import Path
+from textwrap import dedent
 
 from joblib import Memory
 
@@ -50,9 +51,18 @@ def _path_exists_as_dir(value):
     return value
 
 
+def _path_exists_as_file(value):
+    value = Path(value)
+    if not value.is_file():
+        raise ArgumentTypeError(f"File {value.resolve()!s} should exist.")
+    return value
+
+
 def _get_parser():
     parser = ArgumentParser(
-        prog="oceangla", description="Tool for group-level analysis of task-based fMRI"
+        prog="oceangla",
+        description="Tool for group-level analysis of task-based fMRI",
+        formatter_class=RawTextHelpFormatter,
     )
     parser.add_argument(
         "--version", action="version", version=metadata.version("oceangla")
@@ -68,6 +78,21 @@ def _get_parser():
         help="Alpha level(s) that determine significance in statistical tests.",
     )
     parser.add_argument("--model", action="append", metavar=("FORMULA"), dest="models")
+    parser.add_argument(
+        "--model-file",
+        "--model_file",
+        dest="model_file",
+        type=Path,
+        help=dedent("""\
+                        Path to a .txt file containing one model specifier and one formula on each line.
+                        The model name should come first, enclosed in <> brackets, then the formula should appear
+                        after. Example file contents:
+
+                        correct_main_effect_anxiety -> correct ~ anx_score
+                        incorrect_main_effect_anxiety -> incorrect ~ anx_score
+                        correct_minus_incorrect_main_effect_anxiety -> correct - incorrect ~ anx_score
+                        """),
+    )
     parser.add_argument(
         "--model_name",
         "--model-name",
@@ -91,6 +116,12 @@ def _get_parser():
         type=Path,
         dest="dlabel_paths",
         help="Path(s) to .dlabel.nii file(s) containing parcellation schemes to run models on, in addition to dense models.",
+    )
+    parser.add_argument(
+        "--run-models-on-parcels-only",
+        action="store_true",
+        dest="run_models_on_parcels_only",
+        help="If --parcellation-dlabel is specified, only run models on parcellated first-level outputs instead of vertex-wise.",
     )
     parser.add_argument(
         "-f",

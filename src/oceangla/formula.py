@@ -1,6 +1,11 @@
 import logging
 from collections import namedtuple
 from enum import Enum, auto
+from pathlib import Path
+import re
+from textwrap import dedent
+
+from pathvalidate import sanitize_filename
 
 
 logger = logging.getLogger(__name__)
@@ -287,3 +292,36 @@ class FormulaParser:
         while isinstance(node, list) and self.peek().type == node[0].type:
             node.append(self.unscaled_var())
         return node
+
+
+def parse_model_file(model_file: Path) -> tuple[list[str], list[str]]:
+    model_names, models = [], []
+    with open(model_file) as f:
+        lines = f.readlines()
+    for line in lines:
+        if len(re.findall("->", line)) != 1:
+            raise ValueError(
+                f"Models in model file {model_file.resolve()} "
+                "must contain one arrow -> separating the model "
+                "name on the left, and the formula on the right."
+            )
+        model_name, formula = [chunk.strip() for chunk in line.split("->")]
+        if len(model_name) == 0 or len(formula) == 0:
+            raise ValueError(
+                dedent(f"""
+                Each model specified in {model_file.resolve()}
+                must contain a model name and formula, separated by an
+                arrow '->'. Example file contents:
+
+                model1     ->     depvar ~ indepvar1 + indepvar2
+
+                ^                 ^
+                |                 |
+                model name        model spec
+                """)
+            )
+        model_name = sanitize_filename(model_name)
+        FormulaParser(formula)  # quick parse, should error out if invalid
+        model_names.append(model_name)
+        models.append(formula)
+    return (model_names, models)

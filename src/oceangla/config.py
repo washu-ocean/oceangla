@@ -11,6 +11,7 @@ class config:  # All attributes are set in parser.py parse_args()
     fladir_paths: list[Path] | None = None
     indepvar: list[str] | None = None
     models: list[str] | None = None
+    model_file: Path | None = None
     model_names: list[str] | None = None
     outdir_path: Path = Path("out/")
     reindex: bool = False
