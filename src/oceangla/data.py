@@ -42,15 +42,23 @@ def __db_is_valid(db_path: Path) -> bool:
             return False
         # Check subs_with_all_variables view exists
         if cur.execute(query_view % "subs_with_all_variables").fetchone() is None:
-            logger.warning("view subs_with_all_variables not present in db, reindexing.")
+            logger.warning(
+                "view subs_with_all_variables not present in db, reindexing."
+            )
             return False
         # Check subs_without_all_variables view exists
         if cur.execute(query_view % "subs_without_all_variables").fetchone() is None:
-            logger.warning("view subs_without_all_variables not present in db, reindexing.")
+            logger.warning(
+                "view subs_without_all_variables not present in db, reindexing."
+            )
             return False
-    logger.info(f"Using database at {db_path.resolve()!s} (last modified {time.ctime(os.path.getmtime(str(db_path)))})")
-    logger.warning("Run oceangla with the --reindex option if the contents of your FLA folder or "
-                   "variable .csv/.tsv files have changed.")
+    logger.info(
+        f"Using database at {db_path.resolve()!s} (last modified {time.ctime(os.path.getmtime(str(db_path)))})"
+    )
+    logger.warning(
+        "Run oceangla with the --reindex option if the contents of your FLA folder or "
+        "variable .csv/.tsv files have changed."
+    )
     return True
 
 

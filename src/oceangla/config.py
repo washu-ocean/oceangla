@@ -35,5 +35,5 @@ class config:  # All attributes are set in parser.py parse_args()
         "outdir_path",
         "preprocdir_paths",
         "var_paths",
-        "vertex_area_map_paths"
+        "vertex_area_map_paths",
     )

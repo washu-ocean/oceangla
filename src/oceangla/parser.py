@@ -1,8 +1,6 @@
 import json
 import logging
-import tomllib
 from argparse import ArgumentParser, ArgumentTypeError, RawTextHelpFormatter
-from importlib import metadata
 from pathlib import Path
 from textwrap import dedent
 
@@ -81,16 +79,15 @@ def _get_parser():
         default=[0.05],
         help="Alpha level(s) that determine significance in statistical tests.",
     )
-    parser.add_argument("--model",
-                        action="append",
-                        metavar=("FORMULA"),
-                        dest="models",
-                        default=[])
-    parser.add_argument("--model-file",
-                        "--model_file",
-                        dest="model_file",
-                        type=Path,
-                        help=dedent("""\
+    parser.add_argument(
+        "--model", action="append", metavar=("FORMULA"), dest="models", default=[]
+    )
+    parser.add_argument(
+        "--model-file",
+        "--model_file",
+        dest="model_file",
+        type=Path,
+        help=dedent("""\
                         Path to a .txt file containing one model specifier and one formula on each line.
                         The model name should come first, enclosed in <> brackets, then the formula should appear
                         after. Example file contents:
@@ -98,7 +95,8 @@ def _get_parser():
                         correct_main_effect_anxiety -> correct ~ anx_score
                         incorrect_main_effect_anxiety -> incorrect ~ anx_score
                         correct_minus_incorrect_main_effect_anxiety -> correct - incorrect ~ anx_score
-                        """))
+                        """),
+    )
     parser.add_argument(
         "--model_name",
         "--model-name",
@@ -117,9 +115,7 @@ def _get_parser():
         "already exists.",
     )
     parser.add_argument(
-        "-c","--config",
-        type=Path,
-        help="Path to a config .toml file."
+        "-c", "--config", type=Path, help="Path to a config .toml file."
     )
     parser.add_argument(
         "--parcellation_dlabel",
@@ -224,7 +220,10 @@ def parse_args():
             else:
                 setattr(config, k, v)
         for model_spec in toml_data["model_spec"]:
-            if model_spec["name"] not in config.model_names and model_spec["formula"] not in config.models:
+            if (
+                model_spec["name"] not in config.model_names
+                and model_spec["formula"] not in config.models
+            ):
                 config.model_names.append(model_spec["name"])
                 config.models.append(model_spec["formula"])
     for k, v in args.__dict__.items():
@@ -237,11 +236,16 @@ def parse_args():
     if args.model_file is not None:
         file_model_names, file_models = parse_model_file(config.model_file)
         for file_model_name, file_model in zip(file_model_names, file_models):
-            if file_model_name not in config.model_names and file_model not in config.models:
+            if (
+                file_model_name not in config.model_names
+                and file_model not in config.models
+            ):
                 config.model_names.append(file_model_name)
                 config.models.append(file_model)
             else:
-                logger.warning(f"Duplicate model found between config and cmdline: {file_model_name} -> {file_model}")
+                logger.warning(
+                    f"Duplicate model found between config and cmdline: {file_model_name} -> {file_model}"
+                )
     if not config.outdir_path.is_dir():
         logger.info(
             f"Outdir not found, creating new outdir at: {config.outdir_path.resolve()!s}"
@@ -260,7 +264,9 @@ def parse_args():
                 elif isinstance(v, Path):
                     serializable[k] = str(v.resolve())
             else:
-                json.dumps(v)  # check if object is serializable (i.e. joblib.Memory is not)
+                json.dumps(
+                    v
+                )  # check if object is serializable (i.e. joblib.Memory is not)
                 serializable[k] = v
         except TypeError:
             continue
