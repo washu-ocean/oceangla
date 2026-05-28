@@ -1,12 +1,11 @@
 import logging
+import re
 from collections import namedtuple
 from enum import Enum, auto
 from pathlib import Path
-import re
 from textwrap import dedent
 
 from pathvalidate import sanitize_filename
-
 
 logger = logging.getLogger(__name__)
 

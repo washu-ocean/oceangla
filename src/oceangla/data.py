@@ -1,6 +1,8 @@
 import logging
+import os
 import re
 import sqlite3
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -25,8 +27,31 @@ logger = logging.getLogger(__name__)
 #
 # Maybe we should have a table containing the fla directories that were
 # indexed, and check against that before deciding not to reindex?
-def validate_db():
-    pass
+def __db_is_valid(db_path: Path) -> bool:
+    query_table = "SELECT name FROM sqlite_master WHERE type='table' AND name='%s'"
+    query_view = "SELECT name FROM sqlite_master WHERE type='view' AND name='%s'"
+    with sqlite3.connect(db_path) as con:
+        cur = con.cursor()
+        # Check subject_activation table exists
+        if cur.execute(query_table % "subject_activation").fetchone() is None:
+            logger.warning("Table subject_activation not present in db, reindexing.")
+            return False
+        # Check indepvar table exists
+        if cur.execute(query_table % "indepvar").fetchone() is None:
+            logger.warning("Table indepvar not present in db, reindexing.")
+            return False
+        # Check subs_with_all_variables view exists
+        if cur.execute(query_view % "subs_with_all_variables").fetchone() is None:
+            logger.warning("view subs_with_all_variables not present in db, reindexing.")
+            return False
+        # Check subs_without_all_variables view exists
+        if cur.execute(query_view % "subs_without_all_variables").fetchone() is None:
+            logger.warning("view subs_without_all_variables not present in db, reindexing.")
+            return False
+    logger.info(f"Using database at {db_path.resolve()!s} (last modified {time.ctime(os.path.getmtime(str(db_path)))})")
+    logger.warning("Run oceangla with the --reindex option if the contents of your FLA folder or "
+                   "variable .csv/.tsv files have changed.")
+    return True
 
 
 def __build_path_row(p: Path) -> dict:
@@ -66,7 +91,7 @@ def __build_path_row(p: Path) -> dict:
 def populate_db(fladirs: list[Path], reindex: bool = False) -> Path:
     db_path = config.outdir_path / ".oceangla.db"
     if db_path.is_file():
-        if reindex:
+        if reindex or not __db_is_valid(db_path):
             db_path.unlink()
         else:
             return db_path

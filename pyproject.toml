@@ -7,7 +7,7 @@ authors = [
     { name = "Ramone Agard", email = "rhagard@wustl.edu" },
     { name = "Joey Scanga", email = "scangjo@gmail.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "nibabel>=5.4.2",
     "nilearn>=0.13.1",
@@ -17,6 +17,7 @@ dependencies = [
     "progressbar2>=4.5.0",
     "templateflow>=25.1.2",
     "textual>=8.2.4",
+    "tomlkit>=0.15.0",
 ]
 
 [project.scripts]
