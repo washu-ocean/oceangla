@@ -1,6 +1,6 @@
 [project]
 name = "oceangla"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -34,3 +34,9 @@ dev = [
     "pyright>=1.1.409",
     "pytest>=9.0.3",
 ]
+
+[tool.pdm.version]
+source = "scm"
+write_to = "oceangla/_version.py"
+write_template = "__version__ = '{}'\n"
+

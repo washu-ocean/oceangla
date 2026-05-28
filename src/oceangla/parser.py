@@ -10,6 +10,7 @@ from joblib import Memory
 from tomlkit import aot, document, dumps, item, loads, table
 
 from .formula import parse_model_file
+from ._version import __version__
 
 MODEL_CHOICES = ("ols",)
 
@@ -65,12 +66,11 @@ def _path_exists_as_file(value):
 
 def _get_parser():
     parser = ArgumentParser(
-        prog="oceangla", description="Tool for group-level analysis of task-based fMRI",
+        prog="oceangla",
+        description="Tool for group-level analysis of task-based fMRI",
         formatter_class=RawTextHelpFormatter,
     )
-    parser.add_argument(
-        "--version", action="version", version=metadata.version("oceangla")
-    )
+    parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument(
         "-a",
