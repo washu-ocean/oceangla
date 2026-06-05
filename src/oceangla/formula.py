@@ -73,7 +73,7 @@ def lex_formula_str(formula_str: str) -> list[Token]:
             while pos < len(formula_str) and is_var_char(formula_str[pos]):
                 varname += formula_str[pos]
                 pos += 1
-            if varname == 'ALL':
+            if varname == "ALL":
                 tokens.append(Token(TokenType.ALL_INDIVIDUAL_CONDITIONS, varname))
             elif varname.isdigit():
                 tokens.append(Token(TokenType.NUMBER, varname))
@@ -237,9 +237,13 @@ class FormulaParser:
             )
             varname = self.consume()
             return (op, varname)
-        elif (self.peek().type == TokenType.ALL_INDIVIDUAL_CONDITIONS):  # Scale by positive 1 when no scalar present
+        elif (
+            self.peek().type == TokenType.ALL_INDIVIDUAL_CONDITIONS
+        ):  # Scale by positive 1 when no scalar present
             op = self.consume()
-            if not self.peek().type == TokenType.TILDE:  # Nothing besides {ALL} should be left of the tilde
+            if (
+                not self.peek().type == TokenType.TILDE
+            ):  # Nothing besides {ALL} should be left of the tilde
                 raise UnexpectedTokenError(self)
             return op
         else:

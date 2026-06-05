@@ -121,7 +121,9 @@ def populate_db(fladirs: list[Path], reindex: bool = False) -> Path:
             db_data,
         )
         indepvar_dfs = [
-            pd.read_csv(p, sep="," if p.suffix == ".csv" else "\t", dtype={"subject": str})
+            pd.read_csv(
+                p, sep="," if p.suffix == ".csv" else "\t", dtype={"subject": str}
+            )
             for p in config.var_paths
         ]
         columns_to_keep = set.intersection(*[set(df.columns) for df in indepvar_dfs])
@@ -254,7 +256,9 @@ def get_activation_and_design_matrix(
     final_activation = {}
 
     def _query_activation(condition, scalar=1) -> dict:
-        activation = query_depvar(condition, db_path, column_names, space, task, session)
+        activation = query_depvar(
+            condition, db_path, column_names, space, task, session
+        )
         activation["activation"] *= scalar
         return activation
 
@@ -293,7 +297,12 @@ def get_activation_and_design_matrix(
 
 @config.joblib_memory.cache
 def query_depvar(
-    condition, db_path: str, column_names: list[str], space: str = "fsLR", task: str = None, session: str = None,
+    condition,
+    db_path: str,
+    column_names: list[str],
+    space: str = "fsLR",
+    task: str = None,
+    session: str = None,
 ) -> dict:
     activation = {"space": space}
     with sqlite3.connect(db_path) as con:
