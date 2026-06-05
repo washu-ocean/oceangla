@@ -50,5 +50,6 @@ excludes = [
     "**/test_models.txt",
     ".DS_Store",
     "**/*.db",
-    "**/*.csv"
+    "**/*.csv",
+    "**/.ruff_cache/",
 ]
