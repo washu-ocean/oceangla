@@ -40,3 +40,15 @@ source = "scm"
 write_to = "oceangla/_version.py"
 write_template = "__version__ = '{}'\n"
 
+[tool.pdm.build]
+excludes = [
+    "tests/",
+    "**/*.log",
+    "docs/internal_notes.md",
+    "mypackage/_temp/*",
+    "test_out/",
+    "test_models.txt",
+    ".DS_Store",
+    "*.db",
+    "*.csv"
+]
