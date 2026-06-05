@@ -46,9 +46,9 @@ excludes = [
     "**/*.log",
     "docs/internal_notes.md",
     "mypackage/_temp/*",
-    "test_out/",
-    "test_models.txt",
+    "**/test_out/",
+    "**/test_models.txt",
     ".DS_Store",
-    "*.db",
-    "*.csv"
+    "**/*.db",
+    "**/*.csv"
 ]
