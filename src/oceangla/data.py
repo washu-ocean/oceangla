@@ -316,7 +316,7 @@ def query_depvar(
             ).fetchone()
             query += f"AND subject_activation.session='{session}'"
         query += " ORDER BY subject_activation.subject"
-        print(f"Running query:\n{query}")
+        logger.debug(f"Running query:\n{query}")
         paths = [row[0] for row in cur.execute(query)]
         try:
             first_img = nib.load(paths[0])
