@@ -6,6 +6,7 @@ from .config import config
 from .model import OLSModel
 from .parser import parse_args
 from .prompt import prompt_space, prompt_task
+from .formula import FormulaParser, TokenType
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -20,10 +21,7 @@ logger.addHandler(handler)
 def main():
     logger.info(f"oceangla {metadata.version('oceangla')}")
     parse_args()
-    from .data import (  # importing now to leverage caching activation data
-        get_activation_and_design_matrix,
-        populate_db,
-    )
+    from .data import populate_db  # importing now to leverage caching activation data
 
     if config.verbose:
         logger.setLevel(logging.DEBUG)
@@ -32,16 +30,44 @@ def main():
     for model_name, model in zip(config.model_names, config.models):
         space = prompt_space(config.db_path)
         task = prompt_task(config.db_path)
-        design_matrix, activation = get_activation_and_design_matrix(
-            model, config.db_path, space=space, task=task
-        )
-        OLSModel(
-            activation,
-            design_matrix,
-            model_desc=model_name,
-            perms=config.perms,
-            alpha=config.alphas,
-        ).fit()
+        depvar = FormulaParser(model).tree[0]
+        if hasattr(depvar[0], 'type') and depvar[0].type == TokenType.ALL_INDIVIDUAL_CONDITIONS:
+            from .data import get_unique_conditions_as_list
+            all_conditions = get_unique_conditions_as_list(config.db_path)
+            for condition in all_conditions:
+                run_ols_model(
+                    condition.replace('-', '_') + "~" + model.split('~')[-1].strip(),
+                    model_name + f"_condition-{condition}",
+                    space,
+                    task
+                )
+        else:
+            run_ols_model(model, model_name, space, task)
+        #
+        # design_matrix, activation = get_activation_and_design_matrix(
+        #     model, config.db_path, space=space, task=task
+        # )
+        # OLSModel(
+        #     activation,
+        #     design_matrix,
+        #     model_desc=model_name,
+        #     perms=config.perms,
+        #     alpha=config.alphas,
+        # ).fit()
+
+
+def run_ols_model(model: str, model_name: str, space: str, task: str):
+    from .data import get_activation_and_design_matrix
+    design_matrix, activation = get_activation_and_design_matrix(
+        model, config.db_path, space=space, task=task
+    )
+    OLSModel(
+        activation,
+        design_matrix,
+        model_desc=model_name,
+        perms=config.perms,
+        alpha=config.alphas,
+    ).fit()
 
 
 if __name__ == "__main__":

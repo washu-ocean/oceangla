@@ -24,6 +24,7 @@ class TokenType(Enum):
     NUMBER = auto()
     LPAREN = auto()
     RPAREN = auto()
+    ALL_INDIVIDUAL_CONDITIONS = auto()
     PIPE = auto()
     ZSCORE = auto()
 
@@ -72,7 +73,9 @@ def lex_formula_str(formula_str: str) -> list[Token]:
             while pos < len(formula_str) and is_var_char(formula_str[pos]):
                 varname += formula_str[pos]
                 pos += 1
-            if varname.isdigit():
+            if varname == 'ALL':
+                tokens.append(Token(TokenType.ALL_INDIVIDUAL_CONDITIONS, varname))
+            elif varname.isdigit():
                 tokens.append(Token(TokenType.NUMBER, varname))
             else:
                 tokens.append(Token(TokenType.VAR, varname))
@@ -223,6 +226,8 @@ class FormulaParser:
     def unscaled_var(self):
         if self.peek().type in (TokenType.PLUS, TokenType.MINUS, TokenType.LPAREN):
             return self.scaled_var()
+        elif self.peek().type in (TokenType.PLUS, TokenType.MINUS, TokenType.LPAREN):
+            return self.scaled_var()
         elif (
             self.peek().type == TokenType.VAR
         ):  # Scale by positive 1 when no scalar present
@@ -232,6 +237,11 @@ class FormulaParser:
             )
             varname = self.consume()
             return (op, varname)
+        elif (self.peek().type == TokenType.ALL_INDIVIDUAL_CONDITIONS):  # Scale by positive 1 when no scalar present
+            op = self.consume()
+            if not self.peek().type == TokenType.TILDE:  # Nothing besides {ALL} should be left of the tilde
+                raise UnexpectedTokenError(self)
+            return op
         else:
             raise UnexpectedTokenError(self)
 

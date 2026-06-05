@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 # indexed, and check against that before deciding not to reindex?
 def __db_is_valid(db_path: Path) -> bool:
     query_table = "SELECT name FROM sqlite_master WHERE type='table' AND name='%s'"
-    query_view = "SELECT name FROM sqlite_master WHERE type='view' AND name='%s'"
     with sqlite3.connect(db_path) as con:
         cur = con.cursor()
         # Check subject_activation table exists
@@ -39,18 +38,6 @@ def __db_is_valid(db_path: Path) -> bool:
         # Check indepvar table exists
         if cur.execute(query_table % "indepvar").fetchone() is None:
             logger.warning("Table indepvar not present in db, reindexing.")
-            return False
-        # Check subs_with_all_variables view exists
-        if cur.execute(query_view % "subs_with_all_variables").fetchone() is None:
-            logger.warning(
-                "view subs_with_all_variables not present in db, reindexing."
-            )
-            return False
-        # Check subs_without_all_variables view exists
-        if cur.execute(query_view % "subs_without_all_variables").fetchone() is None:
-            logger.warning(
-                "view subs_without_all_variables not present in db, reindexing."
-            )
             return False
     logger.info(
         f"Using database at {db_path.resolve()!s} (last modified {time.ctime(os.path.getmtime(str(db_path)))})"
@@ -134,7 +121,7 @@ def populate_db(fladirs: list[Path], reindex: bool = False) -> Path:
             db_data,
         )
         indepvar_dfs = [
-            pd.read_csv(p, sep="," if p.suffix == ".csv" else "\t")
+            pd.read_csv(p, sep="," if p.suffix == ".csv" else "\t", dtype={"subject": str})
             for p in config.var_paths
         ]
         columns_to_keep = set.intersection(*[set(df.columns) for df in indepvar_dfs])
@@ -143,7 +130,7 @@ def populate_db(fladirs: list[Path], reindex: bool = False) -> Path:
                 raise ValueError(
                     f"Missing required column 'subject' from {config.var_paths[idx].resolve()!s}"
                 )
-            indepvar_dfs[idx]["subject"] = indepvar_dfs[idx]["subject"].astype(str)
+            indepvar_dfs[idx] = indepvar_dfs[idx].dropna(subset=["subject"])
             indepvar_dfs[idx]["subject"].str.replace("sub-", "")
             indepvar_dfs[idx] = (
                 indepvar_dfs[idx]
@@ -163,11 +150,24 @@ def populate_db(fladirs: list[Path], reindex: bool = False) -> Path:
                 con=con,
                 if_exists="append",
                 index=False,
+                dtype={"subject": "TEXT"},
             )
         con.commit()
 
     logger.debug("DB created successfully!")
     return db_path
+
+
+def get_unique_conditions_as_list(db_path: str | Path) -> list[str]:
+    with sqlite3.connect(db_path) as con:
+        cur = con.cursor()
+        unique_conditions = [
+            row[0]
+            for row in cur.execute(
+                "SELECT DISTINCT condition FROM subject_activation"
+            ).fetchall()
+        ]
+        return unique_conditions
 
 
 def get_activation_and_design_matrix(
@@ -178,7 +178,8 @@ def get_activation_and_design_matrix(
     session: str = None,
 ) -> tuple[pd.DataFrame, dict]:
     deptree, indeptree = FormulaParser(formula).tree[0], FormulaParser(formula).tree[1]
-    columns_to_query = []
+    column_queries = []
+    column_names = []
 
     def _eval_indep_node(node):
         if isinstance(node, Token) and node.type == TokenType.INTERCEPT:
@@ -186,18 +187,20 @@ def get_activation_and_design_matrix(
         elif is_scaled_value_node(node):
             (sign, scalar), varname = node
             sign, scalar, varname = sign.value, scalar.value, varname.value
-            columns_to_query.append(f"{sign}{scalar} * {varname} AS {varname}")
+            column_names.append(varname)
+            column_queries.append(f"{sign}{scalar} * {varname} AS {varname}")
         elif (
             isinstance(node, list) and node[0].type == TokenType.MUL
         ):  # full interaction
             for node2 in node[1:]:
                 (sign, scalar), varname = node2
                 sign, scalar, varname = sign.value, scalar.value, varname.value
+                column_names.append(varname)
                 if (
                     subquery := f"{sign}{scalar} * {varname} AS {varname}"
-                ) not in columns_to_query:
-                    columns_to_query.append(subquery)
-            columns_to_query.append(
+                ) not in column_queries:
+                    column_queries.append(subquery)
+            column_queries.append(
                 " * ".join(
                     [
                         f"({sign.value}{scalar.value} * {varname.value})"
@@ -205,13 +208,14 @@ def get_activation_and_design_matrix(
                     ]
                 )
             )
-            columns_to_query[-1] += " AS interaction_" + "_".join(
+            column_queries[-1] += " AS interaction_" + "_".join(
                 varname.value for (_, _), varname in node[1:]
             )
         elif (
             isinstance(node, list) and node[0].type == TokenType.INTERACTION
         ):  # just interaction term
-            columns_to_query.append(
+            column_names.extend([varname.value for (_, _), varname in node[1:]])
+            column_queries.append(
                 " * ".join(
                     [
                         f"({sign.value}{scalar.value} * {varname.value})"
@@ -219,7 +223,7 @@ def get_activation_and_design_matrix(
                     ]
                 )
             )
-            columns_to_query[-1] += " AS interaction_" + "_".join(
+            column_queries[-1] += " AS interaction_" + "_".join(
                 varname.value for (_, _), varname in node[1:]
             )
         else:
@@ -230,59 +234,15 @@ def get_activation_and_design_matrix(
     for node in indeptree:
         _eval_indep_node(node)
 
+    column_names = list(set(column_names))
+
     with sqlite3.connect(db_path) as con:
-        cur = con.cursor()
-        is_not_null_condition = " AND ".join(
-            [f"indepvar.{v.split()[-1].strip()} IS NOT NULL" for v in columns_to_query]
-        )
-        is_null_condition = is_not_null_condition.replace(
-            "IS NOT NULL", "IS NULL"
-        ).replace("AND", "OR")
-        if (
-            len(
-                cur.execute(
-                    'SELECT name FROM sqlite_master WHERE type = "view" AND name = "subs_with_all_variables"'
-                ).fetchall()
-            )
-            == 0
-        ):
-            cur.execute(f"""
-            CREATE VIEW subs_with_all_variables AS
-            SELECT DISTINCT indepvar.subject FROM indepvar INNER JOIN subject_activation ON subject_activation.subject = indepvar.subject
-            WHERE {is_not_null_condition}
-            """)
-        if (
-            len(
-                cur.execute(
-                    'SELECT name FROM sqlite_master WHERE type = "view" AND name = "subs_without_all_variables"'
-                ).fetchall()
-            )
-            == 0
-        ):
-            cur.execute(f"""
-            CREATE VIEW subs_without_all_variables AS
-            SELECT DISTINCT indepvar.subject FROM indepvar INNER JOIN subject_activation ON subject_activation.subject = indepvar.subject
-            WHERE {is_null_condition}
-            """)
-        if (
-            len(
-                subs_without_variables := [
-                    row[0]
-                    for row in cur.execute(
-                        "SELECT subject FROM subs_without_all_variables"
-                    ).fetchall()
-                ]
-            )
-            > 0
-        ):
-            logger.warning(
-                "Subjects who have missing data for one or more independent variables: "
-                + ",".join(subs_without_variables)
-            )
         query = (
             "SELECT "
-            + ",".join(columns_to_query)
-            + " FROM indepvar WHERE subject IN subs_with_all_variables ORDER BY subject"
+            + ",".join(column_queries)
+            + " FROM indepvar "
+            + " AND ".join([f" WHERE {col} IS NOT NULL " for col in column_names])
+            + "ORDER BY subject"
         )
         df = pd.read_sql_query(query, con)
     df["intercept"] = 1
@@ -294,7 +254,7 @@ def get_activation_and_design_matrix(
     final_activation = {}
 
     def _query_activation(condition, scalar=1) -> dict:
-        activation = query_depvar(condition, db_path, space, task, session)
+        activation = query_depvar(condition, db_path, column_names, space, task, session)
         activation["activation"] *= scalar
         return activation
 
@@ -333,25 +293,28 @@ def get_activation_and_design_matrix(
 
 @config.joblib_memory.cache
 def query_depvar(
-    condition, db_path: str, space: str = "fsLR", task: str = None, session: str = None
+    condition, db_path: str, column_names: list[str], space: str = "fsLR", task: str = None, session: str = None,
 ) -> dict:
     activation = {"space": space}
     with sqlite3.connect(db_path) as con:
         cur = con.cursor()
         query = f"""
         SELECT path FROM subject_activation
-        WHERE subject IN subs_with_all_variables AND (condition='{condition}' OR condition='{condition.replace("_", "-")}')
-        AND space='{space}'
+        INNER JOIN indepvar ON subject_activation.subject = indepvar.subject
+        WHERE (subject_activation.condition='{condition}' OR subject_activation.condition='{condition.replace("_", "-")}')
+        AND subject_activation.space='{space}'
         """
+        for col in column_names:
+            query += f"AND indepvar.{col} IS NOT NULL "
         if task is not None:
-            query += f"AND task='{task}' "
+            query += f"AND subject_activation.task='{task}' "
         if session is not None:
-            query += f"AND session='{session}' "
+            query += f"AND subject_activation.session='{session}' "
         else:  # Try and get the most common session
             session, _ = cur.execute(
                 """ SELECT session, COUNT(session) as frequency FROM subject_activation GROUP BY session ORDER BY frequency DESC LIMIT 1 """
             ).fetchone()
-            query += f"AND session='{session}'"
+            query += f"AND subject_activation.session='{session}'"
         query += " ORDER BY subject_activation.subject"
         print(f"Running query:\n{query}")
         paths = [row[0] for row in cur.execute(query)]
