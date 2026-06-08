@@ -34,6 +34,11 @@ dev = [
     "pyright>=1.1.409",
     "pytest>=9.0.3",
 ]
+docs = [
+    "sphinx>=9.0.4",
+    "sphinx-autobuild>=2025.8.25",
+    "sphinx-rtd-theme>=3.1.0",
+]
 
 [tool.pdm.version]
 source = "scm"

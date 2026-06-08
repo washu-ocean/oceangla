@@ -1,0 +1,3 @@
+main_effect_age -> taskresponse ~ age
+main_effect_adhd -> taskresponse ~ adhd
+interaction_age_adhd -> taskresponse ~ age * adhd
