@@ -129,7 +129,11 @@ then run a similar command as above using ``--model-file`` instead::
       --model-name main_effect_age \
       --model 'ALL ~ main_effect_age'
 
-Looking at model outputs
-~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. warning::
+
+  Using the 'ALL' shorthand above will run your model on *all* first-level effects, including any nuisance regressors.
+
+
 
 
