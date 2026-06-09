@@ -27,7 +27,12 @@ def main():
         for handler in logger.handlers:
             handler.setLevel(logging.DEBUG)
 
-    config.db_path = populate_db(config.fladir_paths, reindex=config.reindex)
+    config.db_path = populate_db(
+        config.outdir_path / ".oceangla.db",
+        config.fladir_paths,
+        config.var_paths,
+        reindex=config.reindex
+    )
     for model_name, model in zip(config.model_names, config.models):
         space = prompt_space(config.db_path)
         task = prompt_task(config.db_path)

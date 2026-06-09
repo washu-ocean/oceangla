@@ -83,8 +83,10 @@ def __build_path_row(p: Path) -> dict:
     return row
 
 
-def populate_db(fladirs: list[Path], reindex: bool = False) -> Path:
-    db_path = config.outdir_path / ".oceangla.db"
+def populate_db(db_path: Path,
+                fladirs: list[Path],
+                var_paths: list[Path],
+                reindex: bool = False) -> Path:
     if db_path.is_file():
         if reindex or not __db_is_valid(db_path):
             db_path.unlink()
@@ -124,13 +126,13 @@ def populate_db(fladirs: list[Path], reindex: bool = False) -> Path:
             pd.read_csv(
                 p, sep="," if p.suffix == ".csv" else "\t", dtype={"subject": str}
             )
-            for p in config.var_paths
+            for p in var_paths
         ]
         columns_to_keep = set.intersection(*[set(df.columns) for df in indepvar_dfs])
         for idx in range(len(indepvar_dfs)):
             if "subject" not in indepvar_dfs[idx].columns:
                 raise ValueError(
-                    f"Missing required column 'subject' from {config.var_paths[idx].resolve()!s}"
+                    f"Missing required column 'subject' from {var_paths[idx].resolve()!s}"
                 )
             indepvar_dfs[idx] = indepvar_dfs[idx].dropna(subset=["subject"])
             indepvar_dfs[idx]["subject"].str.replace("sub-", "")
