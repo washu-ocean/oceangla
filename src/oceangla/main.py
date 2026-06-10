@@ -1,6 +1,7 @@
 import logging
 import sys
 from importlib import metadata
+from collections import defaultdict
 
 from .config import config
 from .data import populate_db,get_activation_and_design_matrix
@@ -33,9 +34,11 @@ def main():
         config.var_paths,
         reindex=config.reindex
     )
+    model_params = defaultdict(dict)
     for model_name, model in zip(config.model_names, config.models):
-        space = prompt_space(config.db_path)
-        task = prompt_task(config.db_path)
+        model_params[f"{model_name}_{model}"]["space"] = prompt_space(config.db_path)
+        model_params[f"{model_name}_{model}"]["task"] = prompt_task(config.db_path)
+    for model_name, model in zip(config.model_names, config.models):
         depvar = FormulaParser(model).tree[0]
         if (
             hasattr(depvar[0], "type")
@@ -48,11 +51,11 @@ def main():
                 run_ols_model(
                     condition.replace("-", "_") + "~" + model.split("~")[-1].strip(),
                     model_name + f"_condition-{condition}",
-                    space,
-                    task,
+                    model_params[f"{model_name}_{model}"]["space"],
+                    model_params[f"{model_name}_{model}"]["task"]
                 )
         else:
-            run_ols_model(model, model_name, space, task)
+            run_ols_model(model, model_name, model_params[f"{model_name}_{model}"]["space"], model_params[f"{model_name}_{model}"]["task"])
 
 
 def run_ols_model(model: str, model_name: str, space: str, task: str):
