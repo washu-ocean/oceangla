@@ -9,8 +9,8 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import pandas as pd
+import joblib
 
-from .config import config
 from .error import (
     print_unique_conditions,
     print_unique_sessions,
@@ -180,6 +180,7 @@ def get_activation_and_design_matrix(
     space: str = "fsLR",
     task: str = None,
     session: str = None,
+    memory: joblib.Memory | None = None
 ) -> tuple[pd.DataFrame, dict]:
     deptree, indeptree = FormulaParser(formula).tree[0], FormulaParser(formula).tree[1]
     column_queries = []
@@ -257,8 +258,13 @@ def get_activation_and_design_matrix(
     activations = {}
     final_activation = {}
 
+    if memory is None:
+        _query_depvar = query_depvar
+    else:
+        _query_depvar = memory.cache(query_depvar)
+
     def _query_activation(condition, scalar=1) -> dict:
-        activation = query_depvar(
+        activation = _query_depvar(
             condition, db_path, column_names, space, task, session
         )
         activation["activation"] *= scalar
@@ -297,7 +303,6 @@ def get_activation_and_design_matrix(
     return df, final_activation
 
 
-@config.joblib_memory.cache
 def query_depvar(
     condition,
     db_path: str,
