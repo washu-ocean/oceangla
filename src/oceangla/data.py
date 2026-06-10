@@ -122,6 +122,12 @@ def populate_db(db_path: Path,
             "INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :fladir);",
             db_data,
         )
+        cur.execute("""
+        CREATE TABLE subjects
+        AS SELECT DISTINCT subject
+        FROM subject_activation
+        ORDER BY subject
+        """)
         indepvar_dfs = [
             pd.read_csv(
                 p, sep="," if p.suffix == ".csv" else "\t", dtype={"subject": str}
@@ -136,13 +142,16 @@ def populate_db(db_path: Path,
                 )
             indepvar_dfs[idx] = indepvar_dfs[idx].dropna(subset=["subject"])
             indepvar_dfs[idx]["subject"].str.replace("sub-", "")
+            for col in indepvar_dfs[idx].columns:
+                if indepvar_dfs[idx][col].dtype in (np.float64, np.int64, np.float32, np.int32):
+                    indepvar_dfs[idx][f"{col}_ZSCORE"] = (indepvar_dfs[idx][col] - indepvar_dfs[idx][col].mean()) / indepvar_dfs[idx][col].std()
             indepvar_dfs[idx] = (
                 indepvar_dfs[idx]
                 .drop(
                     columns=[
                         column
                         for column in indepvar_dfs[idx].columns
-                        if column not in columns_to_keep
+                        if not column.endswith("_ZSCORE") and column not in columns_to_keep
                     ]
                 )
                 .sort_values(by="subject")
@@ -193,7 +202,7 @@ def get_activation_and_design_matrix(
             (sign, scalar), varname = node
             sign, scalar, varname = sign.value, scalar.value, varname.value
             column_names.append(varname)
-            column_queries.append(f"{sign}{scalar} * {varname} AS {varname}")
+            column_queries.append(f"{sign}{scalar} * {varname}_ZSCORE AS {varname}")
         elif (
             isinstance(node, list) and node[0].type == TokenType.MUL
         ):  # full interaction
@@ -202,13 +211,13 @@ def get_activation_and_design_matrix(
                 sign, scalar, varname = sign.value, scalar.value, varname.value
                 column_names.append(varname)
                 if (
-                    subquery := f"{sign}{scalar} * {varname} AS {varname}"
+                    subquery := f"{sign}{scalar} * {varname}_ZSCORE AS {varname}"
                 ) not in column_queries:
                     column_queries.append(subquery)
             column_queries.append(
                 " * ".join(
                     [
-                        f"({sign.value}{scalar.value} * {varname.value})"
+                        f"({sign.value}{scalar.value} * {varname.value}_ZSCORE)"
                         for (sign, scalar), varname in node[1:]
                     ]
                 )
@@ -223,7 +232,7 @@ def get_activation_and_design_matrix(
             column_queries.append(
                 " * ".join(
                     [
-                        f"({sign.value}{scalar.value} * {varname.value})"
+                        f"({sign.value}{scalar.value} * {varname.value}_ZSCORE)"
                         for (sign, scalar), varname in node[1:]
                     ]
                 )
@@ -246,8 +255,9 @@ def get_activation_and_design_matrix(
             "SELECT "
             + ",".join(column_queries)
             + " FROM indepvar "
+            + " INNER JOIN subjects ON subjects.subject = indepvar.subject "
             + " AND ".join([f" WHERE {col} IS NOT NULL " for col in column_names])
-            + "ORDER BY subject"
+            + "ORDER BY indepvar.subject"
         )
         df = pd.read_sql_query(query, con)
     df["intercept"] = 1
