@@ -353,6 +353,7 @@ class OLSModel:
             self._save_nifti()
         elif self.image_type == "CIFTI":
             self._save_cifti()
+        self.design_matrix.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t")
 
     def _save_cifti(self):
         for datatype, data in (
