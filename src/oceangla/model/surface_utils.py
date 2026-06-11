@@ -143,7 +143,7 @@ def get_cluster_sizes_from_pmap(
             )
 
 
-def get_biggest_clusters_from_pmap(
+def get_biggest_surface_clusters(
     pval: np.ndarray,
     pthr: float,
     neighbors: list[np.ndarray],

@@ -22,11 +22,6 @@ from .formula import FormulaParser, Token, TokenType, is_scaled_value_node
 logger = logging.getLogger(__name__)
 
 
-# TODO: call this validate_db() function if we don't want to reindex,
-# just to make sure all required tables are present
-#
-# Maybe we should have a table containing the fla directories that were
-# indexed, and check against that before deciding not to reindex?
 def __db_is_valid(db_path: Path) -> bool:
     query_table = "SELECT name FROM sqlite_master WHERE type='table' AND name='%s'"
     with sqlite3.connect(db_path) as con:
@@ -47,40 +42,6 @@ def __db_is_valid(db_path: Path) -> bool:
         "variable .csv/.tsv files have changed."
     )
     return True
-
-
-def __build_path_row(p: Path) -> dict:
-    keys_to_check = (
-        "path",
-        "suffixes",
-        "fladir",
-        "subject",
-        "session",
-        "task",
-        "condition",
-        "space",
-    )
-    row = defaultdict(str)
-    row["path"] = str(p)
-    row["suffixes"] = "".join(p.suffixes)
-    row["fladir"] = str(p.parent.parent.parent.parent.resolve())
-    if match := re.search(r"sub-([a-zA-Z0-9]+)_", p.name):
-        row["subject"] = match.group(1)
-    if match := re.search(r"ses-([a-zA-Z0-9]+)_", p.name):
-        row["session"] = match.group(1)
-    if match := re.search(r"task-([a-zA-Z0-9]+)_", p.name):
-        row["task"] = match.group(1)
-    if match := re.search(r"condition-([a-zA-Z0-9\-]+)_", p.name):
-        row["condition"] = match.group(1)
-    if match := re.search(r"space-([a-zA-Z0-9\-]+)_", p.name):
-        row["space"] = match.group(1)
-    if not all((k in row.keys() for k in keys_to_check)):
-        raise ValueError(
-            f"Could not index path {p.resolve()} "
-            f"in database -- missing keys {','.join([k for k in keys_to_check if k not in row.keys()])}"
-        )
-    logger.debug(f"Inserted {p.resolve()!s}")
-    return row
 
 
 def populate_db(db_path: Path,
@@ -117,7 +78,24 @@ def populate_db(db_path: Path,
                 fladir.glob("sub-*/ses-*/func/*condition*stat-effect_boldmap*")
             )
 
-        db_data = (__build_path_row(p) for p in files_of_interest)
+        row_regex = re.compile(r'sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\-]+)_condition-([a-zA-Z0-9\-]+)_*stat-effect_boldmap(.*)')
+
+        def __build_path_row(p: Path) -> dict:
+            row = {}
+            row["path"] = str(p)
+            row["fladir"] = str(p.parent.parent.parent.parent.resolve())
+            (
+                row["subject"],
+                row["session"],
+                row["task"],
+                row["space"],
+                row["condition"],
+                row["suffix"]
+            ) = re.search(row_regex, p.name).group(1,2,3,4,5,6)
+            logger.debug(f"Built row for {p.resolve()!s}")
+            return row
+
+        db_data = [__build_path_row(p) for p in files_of_interest]
         cur.executemany(
             "INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :fladir);",
             db_data,

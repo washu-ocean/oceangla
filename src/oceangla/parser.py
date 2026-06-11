@@ -189,6 +189,13 @@ def _get_parser():
         "'subject' (program will throw an error if this is not true).",
     )
     parser.add_argument(
+        "--cluster_strategy", "--cluster-strategy",
+        dest="volume_cluster_strategy",
+        choices=["NN1", "NN2", "NN3"],
+        default="NN1",
+        help='Strategy for determining which voxels are considered neighbors. Choices are "NN1" (neighbors touch faces, maximum of 6), "NN2" (neighbors touch faces or edges, maximum of 18), or "NN3" (neighbors touch faces, edges, or corners, maximum 26). Default is "NN1".'
+    )
+    parser.add_argument(
         "--session-name",
         "--session_name",
         "--sessionname",

@@ -21,9 +21,14 @@ from .correction import fdr_correct
 from .surface_utils import (
     build_adjacency_from_faces,
     extract_hemi_values,
-    get_biggest_clusters_from_pmap,
+    get_biggest_surface_clusters,
     get_cluster_index_groups,
     get_template_midthicknesses_from_cifti_header,
+)
+from .volume_utils import (
+    get_volume_array_from_cifti_array,
+    get_biggest_voxel_cluster_sizes,
+    get_voxel_clusters,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +44,7 @@ class OLSModel:
         alpha: float | list[float] = 0.05,
         l_area_path: Path = None,
         r_area_path: Path = None,
+        volume_cluster_strategy: str = "NN1",
         **kwargs,
     ):
         self.design_matrix = design_matrix
@@ -62,6 +68,7 @@ class OLSModel:
         self.fdr_corr_pvals = []
         self.fwer_corr_pvals = []
         self.clus_corr_pvals = []
+        self.volume_cluster_strategy = volume_cluster_strategy
 
         # volume-specific variables
         self.volume_mask = None
@@ -97,13 +104,11 @@ class OLSModel:
                 )
 
         # surface-specific variables
-        self.__biggest_l_surf_cluster_sizes = defaultdict(list)
-        self.__biggest_r_surf_cluster_sizes = defaultdict(list)
+        self.__biggest_surf_cluster_sizes = defaultdict(list)
         if self.image_type == "CIFTI":
             l_surf_img, r_surf_img = get_template_midthicknesses_from_cifti_header(
                 self.header, self.space
             )
-            # breakpoint()
             self.l_faces, self.r_faces = (
                 l_surf_img.darrays[1].data,
                 r_surf_img.darrays[1].data,
@@ -204,19 +209,33 @@ class OLSModel:
             pvals, self.header, self.l_numverts, self.r_numverts
         )
         for alpha in self.alphas:
-            self.__biggest_l_surf_cluster_sizes[alpha].extend(
-                get_biggest_clusters_from_pmap(
+            self.__biggest_surf_cluster_sizes[alpha].extend(
+                get_biggest_surface_clusters(
                     l_pvals, alpha, self.l_neigh, self.l_area
                 )
             )
-            self.__biggest_r_surf_cluster_sizes[alpha].extend(
-                get_biggest_clusters_from_pmap(
+            self.__biggest_surf_cluster_sizes[alpha].extend(
+                get_biggest_surface_clusters(
                     r_pvals, alpha, self.r_neigh, self.r_area
                 )
             )
 
     def __add_cifti_vol_cluster_sizes(self, pvals: np.ndarray):
-        pass
+        pval_volume = get_volume_array_from_cifti_array(pvals, self.header)
+        for alpha in self.alphas:
+            threshold_mask = (pval_volume < alpha)
+            self.__biggest_vol_cluster_sizes[alpha].extend([
+                get_biggest_voxel_cluster_sizes(get_voxel_clusters(threshold_mask[..., vol], strategy=self.volume_cluster_strategy))
+                for vol in range(threshold_mask.shape[-1])
+            ])
+
+    def __add_nifti_cluster_sizes(self, pvals: np.ndarray):
+        for alpha in self.alphas:
+            threshold_mask = (pvals < alpha)
+            self.__biggest_vol_cluster_sizes[alpha].extend([
+                get_biggest_voxel_cluster_sizes(get_voxel_clusters(threshold_mask[..., vol], strategy=self.volume_cluster_strategy))
+                for vol in range(threshold_mask.shape[-1])
+            ])
 
     def _fdr_correct(self):
         if self.image_type == "CIFTI":
@@ -257,7 +276,14 @@ class OLSModel:
         logger.info(f"Saved {p!s}")
 
     def _fdr_correct_nifti(self):
-        logger.warning("NIFTI FDR correction not implemented yet.")
+        for alpha in self.alphas:
+            for value_idx, value_name in enumerate(self.value_names):
+                orig_shape = self.uncorr_pvals[..., value_idx].shape
+                flattened_pvals = self.uncorr_pvals[..., value_idx].flatten()
+                fdr_corr = fdr_correct(flattened_pvals, alpha=alpha).reshape(orig_shape)
+                fdr_corr_img = nib.Nifti1Image(fdr_corr, self.affine, header=self.header)
+                nib.save(fdr_corr_img, p := self.model_outdir / f"{sanitize_filename(self.model_desc)}_beta-{value_name}_fdr_corr_{alpha:.4f}.nii.gz")
+                logger.info(f"Saved {p!s}")
 
     def _cluster_correct(self):
         if self.image_type == "CIFTI":
@@ -277,6 +303,13 @@ class OLSModel:
             (len(self.value_names) * len(self.alphas), self.r_numverts),
             dtype=np.float32,
         )
+        full_clus_corr = np.full(
+            (len(self.value_names) * len(self.alphas), self.uncorr_pvals.shape[1]),
+            np.nan,
+        )
+        volume = get_volume_array_from_cifti_array(self.uncorr_pvals, self.header)
+        volume_voxel_indices = self.header.get_axis(1).voxel[(self.header.get_axis(1).voxel != -1).all(axis=1)]
+        volume_cifti_indices = np.argwhere((self.header.get_axis(1).voxel != -1).all(axis=1)).flatten()
         for alpha_idx, alpha in enumerate(self.alphas):
             for value_idx in range(len(self.value_names)):
                 l_mask = np.isfinite(l_pvals[value_idx, :]) & (
@@ -288,12 +321,14 @@ class OLSModel:
                         if self.l_area is None
                         else np.sum(self.l_area[cluster])
                     )
+                    cluster_size = np.int64(cluster_size)
                     sizes_larger_than_this_cluster = np.float32(
-                        np.sum(self.__biggest_l_surf_cluster_sizes[alpha])
-                        >= cluster_size
+                        np.sum(
+                            self.__biggest_surf_cluster_sizes[alpha] >= cluster_size
+                        )
                     )
                     l_clus_corr[value_idx * alpha_idx + value_idx, cluster] = (
-                        sizes_larger_than_this_cluster / (self.perms + 1)
+                        sizes_larger_than_this_cluster / (len(self.__biggest_surf_cluster_sizes[alpha]) + 1)
                     )
                 r_mask = np.isfinite(r_pvals[value_idx, :]) & (
                     r_pvals[value_idx, :] < alpha
@@ -304,17 +339,23 @@ class OLSModel:
                         if self.r_area is None
                         else np.sum(self.r_area[cluster])
                     )
+                    cluster_size = np.int64(cluster_size)
                     sizes_larger_than_this_cluster = np.float32(
-                        np.sum(self.__biggest_r_surf_cluster_sizes[alpha])
+                        np.sum(self.__biggest_surf_cluster_sizes[alpha])
                         >= cluster_size
                     )
                     r_clus_corr[value_idx * alpha_idx + value_idx, cluster] = (
-                        sizes_larger_than_this_cluster / (self.perms + 1)
+                        sizes_larger_than_this_cluster / (len(self.__biggest_surf_cluster_sizes[alpha]) + 1)
                     )
-        full_clus_corr = np.full(
-            (len(self.value_names) * len(self.alphas), self.uncorr_pvals.shape[1]),
-            np.nan,
-        )
+                volume_mask = volume[..., value_idx] < alpha
+                clus_corr_volume = np.full_like(volume_mask, np.nan, dtype=np.float32)
+                for cluster in get_voxel_clusters(volume_mask):
+                    cluster_size = np.int64(cluster.shape[0])
+                    sizes_larger_than_this_cluster = np.sum(self.__biggest_vol_cluster_sizes[alpha] >= cluster_size)
+                    clus_p = sizes_larger_than_this_cluster / (len(self.__biggest_vol_cluster_sizes[alpha]) + 1)
+                    clus_corr_volume[tuple(cluster.T)] = clus_p
+                full_clus_corr[value_idx * alpha_idx + value_idx, tuple(volume_cifti_indices.T)] = clus_corr_volume[tuple(volume_voxel_indices.T)].T
+
         for name, slc, bmodel in self.header.get_axis(1).iter_structures():
             if name == "CIFTI_STRUCTURE_CORTEX_LEFT":
                 vidx = bmodel.vertex.astype(np.int64)
@@ -322,8 +363,6 @@ class OLSModel:
             elif name == "CIFTI_STRUCTURE_CORTEX_RIGHT":
                 vidx = bmodel.vertex.astype(np.int64)
                 full_clus_corr[:, slc] = r_clus_corr[:, vidx]
-            else:
-                full_clus_corr[:, slc] = 1.0  # not clustered here
         clus_corr_pvals_cifti = nib.cifti2.cifti2.Cifti2Image(
             full_clus_corr,
             (
@@ -346,7 +385,17 @@ class OLSModel:
         logger.info(f"Saved {p!s}")
 
     def _cluster_correct_nifti(self):
-        logger.warning("NIFTI cluster correction not yet implemented.")
+        for alpha in self.alphas:
+            for value_idx, value_name in enumerate(self.value_names):
+                clus_corr = np.full_like(self.uncorr_pvals[..., value_idx], np.nan)
+                for cluster in get_voxel_clusters(self.uncorr_pvals[..., value_idx]):
+                    cluster_size = np.int64(cluster.shape[0])
+                    sizes_larger_than_this_cluster = np.sum(self.__biggest_vol_cluster_sizes[alpha] >= cluster_size)
+                    clus_p = sizes_larger_than_this_cluster / (len(self.__biggest_vol_cluster_sizes[alpha]) + 1)
+                    clus_corr[tuple(cluster.T)] = clus_p
+                clus_corr_img = nib.Nifti1Image(clus_corr, self.affine, header=self.header)
+                nib.save(clus_corr_img, p := self.model_outdir / f"{sanitize_filename(self.model_desc)}_beta-{value_name}_clus_corr_{alpha:.4f}.nii.gz")
+                logger.info(f"Saved {p!s}")
 
     def _save(self):
         if self.image_type == "NIFTI":

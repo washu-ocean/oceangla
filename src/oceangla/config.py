@@ -22,6 +22,7 @@ class config:  # All attributes are set in parser.py parse_args()
     vertex_area_map_paths: tuple[Path, Path] | None = None
     version: str | None = None
     verbose: int = 0
+    volume_cluster_strategy: str = "NN1"
 
     # Store joblib memory cache
     joblib_memory_path: Path | str | None = None
