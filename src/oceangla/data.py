@@ -233,8 +233,8 @@ def get_activation_and_design_matrix(
             "SELECT "
             + ",".join(column_queries)
             + " FROM indepvar "
-            + " INNER JOIN subjects ON subjects.subject = indepvar.subject "
-            + " AND ".join([f" WHERE {col} IS NOT NULL " for col in column_names])
+            + " INNER JOIN subjects ON subjects.subject = indepvar.subject WHERE "
+            + " AND ".join([f" {col} IS NOT NULL " for col in column_names])
             + "ORDER BY indepvar.subject"
         )
         df = pd.read_sql_query(query, con)
