@@ -118,8 +118,7 @@ def _get_parser():
         "-c", "--config", type=Path, help="Path to a config .toml file."
     )
     parser.add_argument(
-        "--parcellation_dlabel",
-        "--parcellation-dlabel",
+        "--dlabel","--dlabels",
         nargs="+",
         type=Path,
         dest="dlabel_paths",
