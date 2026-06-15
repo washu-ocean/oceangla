@@ -112,7 +112,7 @@ def populate_db(db_path: Path,
             )
             for p in var_paths
         ]
-        columns_to_keep = set.intersection(*[set(df.columns) for df in indepvar_dfs])
+        all_column_types = {"subject": "TEXT UNIQUE NOT NULL"}
         for idx in range(len(indepvar_dfs)):
             if "subject" not in indepvar_dfs[idx].columns:
                 raise ValueError(
@@ -121,28 +121,26 @@ def populate_db(db_path: Path,
             indepvar_dfs[idx] = indepvar_dfs[idx].dropna(subset=["subject"])
             indepvar_dfs[idx]["subject"].str.replace("sub-", "")
             for col in indepvar_dfs[idx].columns:
-                if indepvar_dfs[idx][col].dtype in (np.float64, np.int64, np.float32, np.int32):
+                if col == "subject":
+                    continue
+                elif indepvar_dfs[idx][col].dtype in (np.float64, np.int64, np.float32, np.int32):
                     indepvar_dfs[idx][f"{col}_ZSCORE"] = (indepvar_dfs[idx][col] - indepvar_dfs[idx][col].mean()) / indepvar_dfs[idx][col].std()
+                    all_column_types[col] = "NUM"
+                    all_column_types[f"{col}_ZSCORE"] = "REAL"
+                else:
+                    all_column_types[col] = "TEXT"
             indepvar_dfs[idx] = (
                 indepvar_dfs[idx]
-                .drop(
-                    columns=[
-                        column
-                        for column in indepvar_dfs[idx].columns
-                        if not column.endswith("_ZSCORE") and column not in columns_to_keep
-                    ]
-                )
                 .sort_values(by="subject")
                 .reset_index(drop=True)
             )
-        for df in indepvar_dfs:
-            df.to_sql(
-                name="indepvar",
-                con=con,
-                if_exists="append",
-                index=False,
-                dtype={"subject": "TEXT"},
-            )
+        indepvar_df = pd.concat(indepvar_dfs, axis=0, join='outer')
+        indepvar_df.to_sql(
+            name="indepvar",
+            con=con,
+            if_exists="append",
+            index=False,
+        )
         con.commit()
 
     logger.debug("DB created successfully!")
