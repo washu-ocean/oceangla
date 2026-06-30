@@ -1,53 +1,68 @@
-from collections.abc import Sequence
-from pathlib import Path
+from collections.abc import Generator
+import logging
 
 import nibabel as nib
 import numpy as np
+import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
-def cifti_compatible_structures(
-    headers_or_paths: Sequence[nib.cifti2.cifti2.Cifti2Header] | Sequence[str] | Sequence[Path],
-) -> list[str]:
-    """
-    Return a list of common CIFTI structure names (e.g. 'CIFTI_STRUCTURE_CORTEX_LEFT')
-    between all elements in `headers_or_paths`.
+def get_surf_data(img: nib.cifti2.cifti2.Cifti2Image) -> dict[str, np.ndarray]:
+    fdata = img.get_fdata()
+    bm_axis = img.header.get_axis(1)
+    surf_data_dict = {}
+    for name, data_indices, model in bm_axis.iter_structures():
+        if name in ("CIFTI_STRUCTURE_CORTEX_LEFT", "CIFTI_STRUCTURE_CORTEX_RIGHT"):
+            fdata_t = fdata.copy().T[data_indices]
+            vtx_indices = model.vertex
+            surf_data = np.full(
+                (vtx_indices.max() + 1,) + fdata_t.shape[1:],
+                np.nan,
+                dtype=fdata_t.dtype
+            )
+            surf_data[vtx_indices] = fdata_t
+            surf_data_dict[name] = surf_data.T
+    return surf_data_dict
 
-    Parameters
-    ==========
-    headers_or_paths: Sequence[nib.cifti2.cifti2.Cifti2Header] | Sequence[str] | Sequence[Path]
-        Sequence of Cifti2Header, or str/Path pointing to a valid CIFTI image
 
-    Returns
-    =======
-    list[str]
-        List of common CIFTI structure names between all elements in `headers_or_paths`
-    """
-    if len(headers_or_paths) < 2:
-        raise ValueError(
-            "`headers_or_paths` must contain at least 2 of Cifti2Header, str, or Path objects."
+def __slice_to_index_array(my_slice: slice, max_size: int) -> np.ndarray:
+    return np.array(range(*my_slice.indices(max_size)))
+
+
+def __check_network_df_is_valid(network_df: pd.DataFrame) -> None:
+    if not all(
+        (
+            "index" in network_df.columns,
+            network_df["index"].dtype in (np.int32, np.int64),
+            "network_label" in network_df.columns,
         )
-    if not all([isinstance(headers_or_paths[i], type(headers_or_paths[0])) for i in range(1, len(headers_or_paths))]):
+    ):
         raise ValueError(
-            "All elements of `headers_or_paths` must be of the same type (Cifti2Header, str, or Path)"
+            "DataFrame describing networks must have an 'index' column "
+            "of type np.int32 or np.int64, and a 'network_label' column. "
+            f"Columns in dataframe: {network_df.columns}"
         )
-    if type(headers_or_paths[0]) not in (str, Path, nib.cifti2.cifti2.Cifti2Header):
-        raise ValueError(
-            f"All elements of `headers_or_paths` must of type Cifti2Header, str, or Path -- received {type(headers_or_paths[0])}"
-        )
-    cifti_headers = (
-        [nib.load(p).header for p in headers_or_paths]
-        if isinstance(type(headers_or_paths[0]), str) or isinstance(type(headers_or_paths[0]), Path)
-        else headers_or_paths
-    )
-    unique_struct_names = set.intersection(
-        *(set(np.unique(header.get_axis(1).name)) for header in cifti_headers)
-    )
-    common_struct_names = []
-    for name in unique_struct_names:
-        if all((
-            len(header.get_axis(1).name[header.get_axis(1).name == name]) == len(cifti_headers[0].get_axis(1).name[cifti_headers[0].get_axis(1).name == name])
-            for header in cifti_headers[1:]
-        )):
-            common_struct_names.append(str(name))
 
-    return common_struct_names
+
+def get_network_slices(
+    dlabel_img: nib.cifti2.cifti2.Cifti2Image,
+    network_df: pd.DataFrame,
+) -> Generator[np.ndarray, None, None]:
+    __check_network_df_is_valid(network_df)
+    dlabel_surf_data = get_surf_data(dlabel_img)
+    for network_name, network_group_df in network_df.groupby("network_label"):
+        l_label_indices = np.argwhere(
+            np.isin(dlabel_surf_data["CIFTI_STRUCTURE_CORTEX_LEFT"], network_group_df["index"]).flatten()
+        ).flatten()
+        r_label_indices = np.argwhere(
+            np.isin(dlabel_surf_data["CIFTI_STRUCTURE_CORTEX_RIGHT"], network_group_df["index"]).flatten()
+        ).flatten()
+        yield (
+            np.concat(
+                (
+                    l_label_indices,
+                    r_label_indices + np.max(l_label_indices) + 1
+                )
+            )
+        )

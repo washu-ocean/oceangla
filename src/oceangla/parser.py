@@ -8,7 +8,9 @@ from joblib import Memory
 from tomlkit import aot, document, dumps, item, loads, table
 
 from .formula import parse_model_file
+from .data.atlas import VALID_ATLASES
 from ._version import __version__
+
 
 MODEL_CHOICES = ("ols",)
 
@@ -123,6 +125,22 @@ def _get_parser():
         type=Path,
         dest="dlabel_paths",
         help="Path(s) to .dlabel.nii file(s) containing parcellation schemes to run models on, in addition to dense models.",
+    )
+    parser.add_argument(
+        "--dlabel_tsv","--dlabel-tsv",
+        nargs="+",
+        type=Path,
+        dest="dlabel_tsv_paths",
+        help="Path(s) to .tsv file(s) containing network assignment information. Specify these in the "
+        "same order as --dlabel.",
+    )
+    parser.add_argument(
+        "--network-atlas","--network_atlas",
+        nargs="+",
+        dest="network_atlas",
+        default=[],
+        help="Names of network atlas(es) to run within-network FDR correction on. Choices: "
+        f"{','.join(VALID_ATLASES)}",
     )
     parser.add_argument(
         "--run-models-on-parcels-only",
@@ -252,6 +270,9 @@ def parse_args():
                 logger.warning(
                     f"Duplicate model found between config and cmdline: {file_model_name} -> {file_model}"
                 )
+    if len(args.network_atlas) > 0:
+        from .data.atlas import download_atlases
+        download_atlases()
     if not config.outdir_path.is_dir():
         logger.info(
             f"Outdir not found, creating new outdir at: {config.outdir_path.resolve()!s}"

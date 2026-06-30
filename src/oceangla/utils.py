@@ -2,6 +2,16 @@ import json
 from collections import Counter
 from importlib import metadata
 from pathlib import Path
+from typing import Any, Sequence
+
+
+def listify(thing: Any) -> list[Any]:
+    if isinstance(thing, list):
+        return thing
+    elif isinstance(thing, Sequence):
+        return list(thing)
+    else:
+        return [thing]
 
 
 def gen_dataset_description(dataset_description_json: Path | str):

@@ -18,7 +18,7 @@ from templateflow import api as tflow
 # from .model import GroupLevelModel
 from ..config import config
 from ..image_utils.slice import get_spatial_slices
-from ..image_utils.cifti import cifti_compatible_structures
+from ..image_utils.cifti import get_network_slices
 from .correction import fdr_correct
 from .surface_utils import (
     build_adjacency_from_faces,
@@ -72,8 +72,11 @@ class OLSModel:
         self.fwer_corr_pvals = []
         self.clus_corr_pvals = []
         self.volume_cluster_strategy = volume_cluster_strategy
-        if dlabel_paths is not None:
-            self.dlabel_paths = [str(p.resolve()) for p in dlabel_paths]
+        self.dlabel_paths = dlabel_paths
+        if config.dlabel_paths is not None:
+            self.dlabel_paths = [str(p.resolve()) for p in config.dlabel_paths]
+            if config.dlabel_tsv_paths is not None and len(config.dlabel_tsv_paths) == len(config.dlabel_paths):
+                self.dlabel_tsv_paths = [str(p.resolve()) for p in config.dlabel_tsv_paths]
             self.dlabel_path_to_id = OrderedDict()
             for i, path in enumerate(self.dlabel_paths):
                 self.dlabel_path_to_id[path] = f"network{i + 1}"
@@ -201,8 +204,8 @@ class OLSModel:
                         (pvals, pval),
                     ):
                         value_arr[spatial_slice] = value_vec
-                except np.linalg.LinAlgError:
-                    continue
+                except np.linalg.LinAlgError as exc:
+                    logger.warning(f"Matrix equation {pbar} failed: {exc}")
                 pbar += 1
         if permuted_design_matrix is not None:
             self.__add_cluster_sizes(pvals)
@@ -255,31 +258,65 @@ class OLSModel:
     def _fdr_correct(self):
         if self.image_type == "CIFTI":
             self._fdr_correct_cifti()
-            if self.dlabel_paths is not None:
+            if self.dlabel_paths is not None and self.dlabel_tsv_paths is not None:
+                for dlabel_path, dlabel_tsv_path in zip(self.dlabel_paths, self.dlabel_tsv_paths):
+                    self._fdr_correct_cifti(dlabel_path=dlabel_path, tsv_path=dlabel_tsv_path)
+            elif self.dlabel_paths is not None:
                 for dlabel_path in self.dlabel_paths:
                     self._fdr_correct_cifti(dlabel_path=dlabel_path)
+            if len(config.network_atlas) > 0:
+                for atlas_name in config.network_atlas:
+                    self._fdr_correct_cifti(atlas_name=atlas_name)
         elif self.image_type == "NIFTI":
             self._fdr_correct_nifti()
 
-    def _fdr_correct_cifti(self, dlabel_path=None):
+    def _fdr_correct_cifti(self, dlabel_path: str = None, atlas_name: str = None, tsv_path: str = None):
         fdr_corr_pvals = np.empty(
             (len(self.value_names) * len(self.alphas), self.uncorr_pvals.shape[1])
         )
-        if dlabel_path is not None:
+        if dlabel_path is not None and tsv_path is not None:
             logger.info(f"Running within-dlabel FDR correction with areas defined by {dlabel_path}")
             dlabel_img = nib.load(dlabel_path)
-            common_structs = cifti_compatible_structures((self.header, dlabel_img.header))
-            if len(common_structs) == 0:
-                raise ValueError(f"No compatible CIFTI structures between image and {dlabel_path}")
-            dlabel_fdata = dlabel_img.get_fdata()
-            unique_labels = np.unique(dlabel_img.get_fdata())
+            network_df = pd.read_csv(tsv_path, sep="\t")
+            if tsv_path is not None:
+                for alpha_idx, alpha in enumerate(self.alphas):
+                    for value_idx in range(self.uncorr_pvals.shape[0]):
+                        for network_slice in get_network_slices(dlabel_img, network_df):
+                            pval_vec = self.uncorr_pvals[value_idx, network_slice].copy()
+                            pval_vec[np.isnan(pval_vec)] = 1
+                            fdr_corr_pvals[value_idx * alpha_idx + value_idx, network_slice] = fdr_correct(
+                                pval_vec, alpha=alpha
+                            )
+            fdr_corr_pvals_cifti = nib.cifti2.cifti2.Cifti2Image(
+                fdr_corr_pvals,
+                (
+                    nib.cifti2.cifti2_axes.ScalarAxis(
+                        [
+                            f"{valname}_{alpha:.4f}"
+                            for valname, alpha in itertools.product(
+                                self.value_names, self.alphas
+                            )
+                        ]
+                    ),
+                    self.header.get_axis(1),
+                ),
+            )
+            nib.save(
+                fdr_corr_pvals_cifti,
+                p := self.model_outdir
+                / f"{sanitize_filename(self.model_desc)}_fdr_corr_{self.dlabel_path_to_id[dlabel_path]}.dscalar.nii",
+            )
+            logger.info(f"Saved {p!s}")
+        elif atlas_name is not None:
+            from ..data.atlas import fetch_atlas_dlabel_and_tsv
+            atlas_img, network_df = fetch_atlas_dlabel_and_tsv(atlas_name, self.space)
+            logger.info(f"Running within-network FDR correction with {atlas_name} atlas")
             for alpha_idx, alpha in enumerate(self.alphas):
                 for value_idx in range(self.uncorr_pvals.shape[0]):
-                    for label in unique_labels:
-                        label_indices = np.argwhere(dlabel_fdata == label)
-                        pval_vec = self.uncorr_pvals[value_idx, label_indices].copy()
+                    for network_slice in get_network_slices(atlas_img, network_df):
+                        pval_vec = self.uncorr_pvals[value_idx, network_slice].copy()
                         pval_vec[np.isnan(pval_vec)] = 1
-                        fdr_corr_pvals[value_idx * alpha_idx + value_idx, label_indices] = fdr_correct(
+                        fdr_corr_pvals[value_idx * alpha_idx + value_idx, network_slice] = fdr_correct(
                             pval_vec, alpha=alpha
                         )
             fdr_corr_pvals_cifti = nib.cifti2.cifti2.Cifti2Image(
@@ -299,7 +336,7 @@ class OLSModel:
             nib.save(
                 fdr_corr_pvals_cifti,
                 p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc)}_fdr_corr_{self.dlabel_path_to_id[dlabel_path]}.dscalar.nii",
+                / f"{sanitize_filename(self.model_desc)}_fdr_corr_atlas-{atlas_name}.dscalar.nii",
             )
             logger.info(f"Saved {p!s}")
         else:

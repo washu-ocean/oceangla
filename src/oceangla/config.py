@@ -8,11 +8,13 @@ class config:  # All attributes are set in parser.py parse_args()
     db_path: str | None = None
     depvar: list[str] | None = None
     dlabel_paths: list[Path] | None = None
+    dlabel_tsv_paths: list[Path] | None = None
     fladir_paths: list[Path] | None = None
     indepvar: list[str] | None = None
     models: list[str] = []
     model_file: Path | None = None
     model_names: list[str] = []
+    network_atlas: list[str] = []
     outdir_path: Path = None
     reindex: bool = False
     perms: int = 0
@@ -28,9 +30,12 @@ class config:  # All attributes are set in parser.py parse_args()
     joblib_memory_path: Path | str | None = None
     joblib_memory: Memory | None = None
 
+    atlas_dir: Path = None
+
     _paths = (
         "db_path",
         "dlabel_paths",
+        "dlabel_tsv_paths",
         "fladir_paths",
         "model_file",
         "outdir_path",

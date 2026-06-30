@@ -1,6 +1,7 @@
 from pathlib import Path
 import pytest
-from ..data import populate_db
+
+from ..db import populate_db
 
 
 @pytest.fixture(scope="session")
@@ -52,5 +53,3 @@ def var_csv(tmp_path_factory):
         for i in range(10):
             f.write(f"{i},{i * 2},{i % 2}")
     return var_csv
-
-

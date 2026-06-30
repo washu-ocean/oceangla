@@ -3,7 +3,6 @@ import os
 import re
 import sqlite3
 import time
-from collections import defaultdict
 from pathlib import Path
 
 import nibabel as nib
@@ -17,7 +16,7 @@ from .error import (
     print_unique_spaces,
     print_unique_tasks,
 )
-from .formula import FormulaParser, Token, TokenType, is_scaled_value_node
+from ..formula import FormulaParser, Token, TokenType, is_scaled_value_node
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +56,7 @@ def populate_db(db_path: Path,
         f"{'Reindexing' if reindex else 'Creating'} sqlite db file at {db_path}"
     )
     with sqlite3.connect(db_path) as con:
+        logger.debug("creating table")
         cur = con.cursor()
         cur.execute("DROP TABLE IF EXISTS subject_activation")
         cur.execute("""
@@ -73,10 +73,16 @@ def populate_db(db_path: Path,
 
         files_of_interest = []
 
+        s = time.time()
+        logger.debug("looking for files")
         for fladir in fladirs:
             files_of_interest.extend(
                 fladir.glob("sub-*/ses-*/func/*condition*stat-effect_boldmap*")
             )
+        e = time.time()
+        logger.debug(f"took {e - s}s to find all files")
+        del s
+        del e
 
         row_regex = re.compile(r'sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\-]+)_condition-([a-zA-Z0-9\-]+)_*stat-effect_boldmap(.*)')
 
@@ -95,9 +101,17 @@ def populate_db(db_path: Path,
             logger.debug(f"Built row for {p.resolve()!s}")
             return row
 
+        logger.debug("building path rows")
+        start_time = time.time()
         db_data = [__build_path_row(p) for p in files_of_interest]
+        end_time = time.time()
+        logger.debug(f"took {end_time - start_time}s to build rows for db")
+        del start_time
+        del end_time
         cur.executemany(
-            "INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :fladir);",
+            """
+            INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :fladir)
+            """,
             db_data,
         )
         cur.execute("""
@@ -168,6 +182,12 @@ def get_activation_and_design_matrix(
     memory: joblib.Memory | None = None
 ) -> tuple[pd.DataFrame, dict]:
     deptree, indeptree = FormulaParser(formula).tree[0], FormulaParser(formula).tree[1]
+    all_conditions = []
+    for node in deptree:
+        if is_scaled_value_node(node):
+            (_, _), condition = node
+            all_conditions.append(condition.value)
+    all_conditions = list(set(all_conditions))
     column_queries = []
     column_names = []
 
@@ -227,20 +247,32 @@ def get_activation_and_design_matrix(
     column_names = list(set(column_names))
 
     with sqlite3.connect(db_path) as con:
-        query = (
-            "SELECT "
-            + ",".join(column_queries)
-            + " FROM indepvar "
-            + " INNER JOIN subjects ON subjects.subject = indepvar.subject WHERE "
-            + " AND ".join([f" {col} IS NOT NULL " for col in column_names])
-            + "ORDER BY indepvar.subject"
+        subject_subquery = """
+        SELECT subject FROM subject_activation
+        WHERE condition IN (
+        """ + ','.join(["'%s'" % cond for cond in all_conditions]) + f"""
         )
+        GROUP BY subject
+        HAVING COUNT(DISTINCT condition) = {len(all_conditions)}
+        """
+        query = (
+            f"""
+            SELECT {','.join(column_queries)} FROM indepvar
+            WHERE subject IN ({subject_subquery})
+            AND {f' AND '.join([' %s IS NOT NULL ' % col for col in column_names])}
+            ORDER BY indepvar.subject
+            """
+        )
+        print(f"Running query:\n{query}")
+        cur = con.cursor()
+        print(cur.execute(query).fetchall())
         df = pd.read_sql_query(query, con)
     df["intercept"] = 1
     cols = ["intercept"] + [
         c for c in df.columns if c != "intercept"
     ]  # rearrange so intercept is first
     df = df[cols]
+    logger.debug(f"queried indepvar rows: {len(df)}")
     activations = {}
     final_activation = {}
 
@@ -302,16 +334,17 @@ def query_depvar(
         cur = con.cursor()
         query = f"""
         SELECT path FROM subject_activation
-        INNER JOIN indepvar ON subject_activation.subject = indepvar.subject
-        WHERE (subject_activation.condition='{condition}' OR subject_activation.condition='{condition.replace("_", "-")}')
+        WHERE subject IN (
+            SELECT DISTINCT subject FROM indepvar
+            WHERE {' AND '.join([' %s IS NOT NULL ' % col for col in column_names])}
+        )
+        AND (subject_activation.condition='{condition}' OR subject_activation.condition='{condition.replace("_", "-")}')
         AND subject_activation.space='{space}'
         """
-        for col in column_names:
-            query += f"AND indepvar.{col} IS NOT NULL "
         if task is not None:
-            query += f"AND subject_activation.task='{task}' "
+            query += f" AND subject_activation.task='{task}' "
         if session is not None:
-            query += f"AND subject_activation.session='{session}' "
+            query += f" AND subject_activation.session='{session}' "
         else:  # Try and get the most common session
             session, _ = cur.execute(
                 """ SELECT session, COUNT(session) as frequency FROM subject_activation GROUP BY session ORDER BY frequency DESC LIMIT 1 """
@@ -320,6 +353,8 @@ def query_depvar(
         query += " ORDER BY subject_activation.subject"
         logger.debug(f"Running query:\n{query}")
         paths = [row[0] for row in cur.execute(query)]
+        print(paths)
+        logger.debug(f"queried activations: {len(paths)}")
         try:
             first_img = nib.load(paths[0])
         except IndexError:

@@ -4,11 +4,12 @@ from importlib import metadata
 from collections import defaultdict
 
 from .config import config
-from .data import populate_db,get_activation_and_design_matrix
+from .data.db import populate_db, get_activation_and_design_matrix
 from .model import OLSModel
 from .parser import parse_args
 from .prompt import prompt_space, prompt_task
 from .formula import FormulaParser, TokenType
+from .dataframes import build_path_df, build_indepvar_df
 
 logger = logging.getLogger()
 
@@ -22,11 +23,12 @@ logger.addHandler(handler)
 def main():
     logger.info(f"oceangla {metadata.version('oceangla')}")
     parse_args()
-
     if config.verbose:
         logger.setLevel(level=logging.DEBUG)
         for handler in logger.handlers:
             handler.setLevel(logging.DEBUG)
+    path_df = build_path_df(config.fladir_paths)
+    indepvar_df = build_indepvar_df(config.var_paths)
 
     config.db_path = populate_db(
         config.outdir_path / ".oceangla.db",
@@ -44,7 +46,7 @@ def main():
             hasattr(depvar[0], "type")
             and depvar[0].type == TokenType.ALL_INDIVIDUAL_CONDITIONS
         ):
-            from .data import get_unique_conditions_as_list
+            from .data.db import get_unique_conditions_as_list
 
             all_conditions = get_unique_conditions_as_list(config.db_path)
             for condition in all_conditions:
@@ -68,8 +70,7 @@ def run_ols_model(model: str, model_name: str, space: str, task: str):
         model_desc=model_name,
         perms=config.perms,
         alpha=config.alphas,
-        volume_cluster_strategy=config.volume_cluster_strategy,
-        dlabel_paths=config.dlabel_paths
+        volume_cluster_strategy=config.volume_cluster_strategy
     ).fit()
 
 

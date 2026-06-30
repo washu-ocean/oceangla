@@ -1,3 +1,3 @@
-from .ols import OLSModel
+from .ols import OLSModel, ModelInputs
 
-__all__ = ["OLSModel"]
+__all__ = ["OLSModel", "ModelInputs"]

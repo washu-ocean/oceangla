@@ -4,8 +4,14 @@ from collections import namedtuple
 from enum import Enum, auto
 from pathlib import Path
 from textwrap import dedent
+import math
 
 from pathvalidate import sanitize_filename
+import pandas as pd
+import numpy as np
+
+from .model import Model
+from .dataframes import zscore
 
 logger = logging.getLogger(__name__)
 
@@ -14,71 +20,67 @@ VALID_FUNCS = ("Z",)
 
 class TokenType(Enum):
     INVALID = auto()
-    VAR = auto()
+    WORD = auto()
     PLUS = auto()
     MINUS = auto()
     TILDE = auto()
     MUL = auto()
-    INTERACT = auto()
-    INTERCEPT = auto()
-    NUMBER = auto()
+    COLON = auto()
+    INT = auto()
+    FLOAT = auto()
     LPAREN = auto()
     RPAREN = auto()
-    ALL_INDIVIDUAL_CONDITIONS = auto()
-    PIPE = auto()
-    ZSCORE = auto()
+    BAR = auto()
+    DIV = auto()
 
 
 Token = namedtuple("Token", ["type", "value"])
-INTERCEPT_TOKEN = Token(type=TokenType.INTERCEPT, value="1")
-
+Contrast = namedtuple("Contrast", ["scalar", "condition"])
+FixedEffect = namedtuple("FixedEffect", ["type", "name"])
+FixedEffectInteraction = namedtuple("FixedEffectInteraction", ["type", "terms"])
+RandomEffect = namedtuple("RandomEffect", ["modifier_type", "modifier_value", "grouping_factor_type", "level1group", "level2group"])
+type ContrastOrEffect = Contrast | FixedEffect | FixedEffectInteraction | RandomEffect
+type ModelMetadata = dict[str, list[ContrastOrEffect] | bool]
 
 def lex_formula_str(formula_str: str) -> list[Token]:
-    if "~" not in formula_str:
-        raise ValueError(
-            "Invalid model spec; must include char '~' to separate dependent from independent variables."
-        )
-    elif formula_str.count("~") != 1:
-        raise ValueError(
-            "Invalid model spec; dependent/independent variable separator '~' can only be included once."
-        )
     pos = 0
-
     tokens = []
 
     def is_var_char(c: str):
-        return c.isalnum() or c in "_"
+        return c.isalnum() or c in "_."
 
     while pos < len(formula_str):
         if formula_str[pos].isspace():
             pos += 1
-        elif formula_str[pos] in "+-*:()~":
+        elif formula_str[pos] in "+-*:()|/~":
             tokens.append(
                 Token(
                     {
                         "+": TokenType.PLUS,
                         "-": TokenType.MINUS,
                         "*": TokenType.MUL,
-                        ":": TokenType.INTERACT,
+                        ":": TokenType.COLON,
                         "(": TokenType.LPAREN,
                         ")": TokenType.RPAREN,
+                        "|": TokenType.BAR,
+                        "/": TokenType.DIV,
                         "~": TokenType.TILDE,
                     }[formula_str[pos]],
-                    formula_str[pos],
+                    None,
                 )
             )
             pos += 1
         elif is_var_char(formula_str[pos]):
-            varname = ""
+            word = ""
             while pos < len(formula_str) and is_var_char(formula_str[pos]):
-                varname += formula_str[pos]
+                word += formula_str[pos]
                 pos += 1
-            if varname == "ALL":
-                tokens.append(Token(TokenType.ALL_INDIVIDUAL_CONDITIONS, varname))
-            elif varname.isdigit():
-                tokens.append(Token(TokenType.NUMBER, varname))
+            if word.isdigit():
+                tokens.append(Token(TokenType.INT, int(word)))
+            elif word.replace(".", "", 1).isdigit():
+                tokens.append(Token(TokenType.FLOAT, float(word)))
             else:
-                tokens.append(Token(TokenType.VAR, varname))
+                tokens.append(Token(TokenType.WORD, word))
         else:
             tokens.append(Token(TokenType.INVALID, formula_str[pos]))
             pos += 1
@@ -113,13 +115,13 @@ def _get_depvars_from_tokens(tokens) -> list[str]:
                 raise ValueError(
                     f"Cannot have token '{tokens[pos].value}' at end of depvar."
                 )
-            if not tokens[pos + 1].type == TokenType.VAR:
+            if not tokens[pos + 1].type == TokenType.WORD:
                 raise ValueError(
                     f"Illegal token after '{tokens[pos].value}' : '{tokens[pos + 1].value}'"
                 )
             depvars.append(f"{tokens[pos].value}{tokens[pos + 1].value}")
             pos += 2
-        elif tokens[pos].type == TokenType.VAR and len(depvars) == 0:
+        elif tokens[pos].type == TokenType.WORD and len(depvars) == 0:
             depvars.append(f"+{tokens[pos].value}")
             pos += 1
         elif tokens[pos].type == TokenType.INTERCEPT:
@@ -142,8 +144,8 @@ def is_scaled_value_node(node):
             len(node) == 2,
             isinstance(node[0][0], Token)
             and node[0][0].type in (TokenType.PLUS, TokenType.MINUS),
-            isinstance(node[0][1], Token) and node[0][1].type == TokenType.NUMBER,
-            isinstance(node[1], Token) and node[1].type == TokenType.VAR,
+            isinstance(node[0][1], Token) and node[0][1].type == TokenType.INT,
+            isinstance(node[1], Token) and node[1].type == TokenType.WORD,
         )
     )
 
@@ -165,39 +167,6 @@ class FormulaParser:
             )
         self.tree = self.parse()
 
-    def __str__(self):
-        s = ""
-        if self.tree is None:
-            return s
-        deptree, indeptree = self.tree
-        for node in deptree:
-            s += f"({node[0][0].value}{node[0][1].value}){node[1].value} "
-        s += "~ "
-        for node in indeptree:
-            if isinstance(node, Token) and node.type == TokenType.INTERCEPT:
-                s += "intercept "
-            elif is_scaled_value_node(node):
-                s += f"({node[0][0].value}{node[0][1].value}){node[1].value} "
-            elif isinstance(node, list) and node[0].type == TokenType.MUL:
-                childnodes = [
-                    f"({childnode[0][0].value}{childnode[0][1].value}){childnode[1].value}"
-                    for childnode in node[1:]
-                ]
-                interaction_term = ":".join(childnodes)
-                s += " ".join([*childnodes, interaction_term])
-            elif isinstance(node, list) and node[0].type == TokenType.INTERACT:
-                childnodes = [
-                    f"({childnode[0][0].value}{childnode[0][1].value}){childnode[1].value}"
-                    for childnode in node[1:]
-                ]
-                interaction_term = ":".join(childnodes)
-                s += f" {interaction_term} "
-        return s.strip()
-
-    def reset(self):
-        self.tokens = self.orig_tokens
-        self.pos = 0
-
     def peek(self):
         return (
             self.tokens[self.pos]
@@ -217,94 +186,204 @@ class FormulaParser:
 
     def depvar(self):
         nodes = []
-        nodes.append(self.unscaled_var())
+        nodes.append(self.depvarname())
         while self.peek().type != TokenType.TILDE:
-            nodes.append(self.scaled_var())
+            nodes.append(self.depvarname_())
         self.consume()
         return nodes
 
-    def unscaled_var(self):
-        if self.peek().type in (TokenType.PLUS, TokenType.MINUS, TokenType.LPAREN):
-            return self.scaled_var()
-        elif self.peek().type in (TokenType.PLUS, TokenType.MINUS, TokenType.LPAREN):
-            return self.scaled_var()
-        elif (
-            self.peek().type == TokenType.VAR
-        ):  # Scale by positive 1 when no scalar present
-            op = (
-                Token(type=TokenType.PLUS, value="+"),
-                Token(type=TokenType.NUMBER, value="1"),
-            )
-            varname = self.consume()
-            return (op, varname)
-        elif (
-            self.peek().type == TokenType.ALL_INDIVIDUAL_CONDITIONS
-        ):  # Scale by positive 1 when no scalar present
-            op = self.consume()
-            if (
-                not self.peek().type == TokenType.TILDE
-            ):  # Nothing besides {ALL} should be left of the tilde
+    def depvarname(self):
+        match self.peek().type:
+            case TokenType.WORD:
+                condition = self.consume().value
+                return Contrast(scalar=1, condition=condition)
+            case _:
                 raise UnexpectedTokenError(self)
-            return op
-        else:
-            raise UnexpectedTokenError(self)
 
-    def scaled_var(self):
-        op = self.scalar()
-        if not self.peek().type == TokenType.VAR:
-            raise UnexpectedTokenError(self)
-        varname = self.consume()
-        return (op, varname)
-
-    def scalar(self):
-        if self.peek().type in (TokenType.PLUS, TokenType.MINUS):
-            sign = self.consume()
-            scalar = Token(type=TokenType.NUMBER, value="1")
-            return (sign, scalar)
-        elif self.peek().type == TokenType.LPAREN:
-            self.consume()
-            if self.peek().type not in (
-                TokenType.PLUS,
-                TokenType.MINUS,
-                TokenType.NUMBER,
-            ):
+    def depvarname_(self):
+        scalar = None
+        match self.peek().type:
+            case TokenType.PLUS:
+                self.consume()
+                scalar = 1
+            case TokenType.MINUS:
+                self.consume()
+                scalar = -1
+            case _:
                 raise UnexpectedTokenError(self)
-            if self.peek().type == TokenType.NUMBER:
-                sign = Token(type=TokenType.PLUS, value="+")
-                scalar = self.consume()
-            elif self.peek().type in (TokenType.PLUS, TokenType.MINUS):
-                sign = self.consume()
-                if not self.peek().type == TokenType.NUMBER:
-                    raise UnexpectedTokenError(self)
-                scalar = self.consume()
-            if not self.peek().type == TokenType.RPAREN:
-                raise UnexpectedTokenError(self)
-            return (sign, scalar)
-        else:
+        assert scalar is not None, "Scalar must be a number"
+        if self.peek().type != TokenType.WORD:
             raise UnexpectedTokenError(self)
+        condition = self.consume().value
+        return Contrast(scalar=scalar, condition=condition)
 
     def indepvar(self):
         nodes = []
-        if self.peek() == Token(type=TokenType.NUMBER, value="1"):
-            nodes.append(INTERCEPT_TOKEN)
-            self.consume()
-        else:
-            nodes.append(self.interaction(start=True))
-        while self.peek().type in (TokenType.PLUS, TokenType.MINUS, TokenType.LPAREN):
-            nodes.append(self.interaction())
-        if INTERCEPT_TOKEN not in nodes:
-            nodes.insert(0, INTERCEPT_TOKEN)
+        nodes.append(self.term())
+        while self.peek() != Token(type=TokenType.INVALID, value=""):
+            nodes.append(self.indepvar_())
         return nodes
 
-    def interaction(self, start=False):
-        node = self.unscaled_var() if start else self.scaled_var()
-        if self.peek().type in (TokenType.MUL, TokenType.INTERACT):
-            op = self.consume()
-            right = self.unscaled_var()
-            node = [op, node, right]
-        while isinstance(node, list) and self.peek().type == node[0].type:
-            node.append(self.unscaled_var())
-        return node
+    def indepvar_(self):
+        match self.peek().type:
+            case TokenType.PLUS:
+                self.consume()
+                return self.term()
+            case _:
+                raise UnexpectedTokenError(self)
+
+    def term(self):
+        match self.peek().type:
+            case TokenType.WORD | TokenType.INT:
+                return self.fixedeffect()
+            case TokenType.LPAREN:
+                return self.randomeffect()
+
+    def fixedeffect(self):
+        node = FixedEffect(type="intercept", name=None)
+        match self.peek().type:
+            case TokenType.WORD:
+                word = self.consume()
+                if word == "C" and self.peek().type == TokenType.LPAREN:
+                    self.consume()
+                    if self.peek().type != TokenType.WORD:
+                        raise UnexpectedTokenError(self)
+                    word = self.consume()
+                    if self.peek().type != TokenType.RPAREN:
+                        raise UnexpectedTokenError(self)
+                    self.consume()
+                    node = FixedEffect(type="categorical", name=word.value)
+                elif word == "fir_frame":
+                    node = FixedEffect(type="fir_frame", name=None)
+                else:
+                    node = FixedEffect(type="continuous", name=word.value)
+            case TokenType.INT:
+                if self.peek().value == 1:
+                    self.consume()
+                elif self.peek().value == 0:
+                    self.consume()
+                    node = FixedEffect(type="no_intercept", name=None)
+            case _:
+                raise UnexpectedTokenError(self)
+        if node.type not in ("invalid", "no_intercept") and self.peek().type in (TokenType.MUL, TokenType.COLON):
+            op = "interact_expand" if self.consume().type == TokenType.MUL else "interact"
+            if not self.peek().type == TokenType.WORD:
+                raise UnexpectedTokenError(self)
+            word = self.consume()
+            if word.value == "C" and self.peek().type == TokenType.LPAREN:
+                self.consume()
+                if self.peek().type != TokenType.WORD:
+                    raise UnexpectedTokenError(self)
+                word = self.consume()
+                if self.peek().type != TokenType.RPAREN:
+                    raise UnexpectedTokenError(self)
+                self.consume()
+                return FixedEffectInteraction(type=op, terms=[node, FixedEffect(
+                    type="categorical", name=word.value
+                )])
+            elif word.value == "fir_frame":
+                return FixedEffectInteraction(type=op, terms=[node, FixedEffect(
+                    type="fir_frame", name=None
+                )])
+            else:
+                return FixedEffectInteraction(type=op, terms=[node, FixedEffect(
+                    type="continuous", name=word.value
+                )])
+        else:
+            return node
+
+    def randomeffect(self):
+        self.consume()
+        modifier_type, modifier_value = None, None
+        match self.peek().type:  # modifier
+            case TokenType.WORD:
+                modifier_type, modifier_value = "slope_modifier", self.consume().value
+            case TokenType.INT:
+                if self.peek().value == 1:
+                    self.consume()
+                    modifier_type, modifier_value = "intercept_modifier", None
+                elif self.peek().value == 0:
+                    self.consume()
+                    if not self.peek().type == TokenType.PLUS:
+                        raise UnexpectedTokenError(self)
+                    self.consume()
+                    if not self.peek().type == TokenType.WORD:
+                        raise UnexpectedTokenError(self)
+                    modifier_type, modifier_value = "slope_modifier_no_intercept", self.consume().value
+                else:
+                    raise UnexpectedTokenError(self)
+            case _:
+                raise UnexpectedTokenError(self)
+        if not self.peek().type == TokenType.BAR:
+            raise UnexpectedTokenError(self)
+        while self.peek().type == TokenType.BAR:
+            self.consume()  # No difference in single- and double-bars for now
+        if self.peek().type != TokenType.WORD:
+            raise UnexpectedTokenError(self)
+        grouping_var = self.consume().value
+        match self.peek().type:
+            case TokenType.DIV:
+                self.consume()
+                if self.peek().type != TokenType.WORD:
+                    raise UnexpectedTokenError(self)
+                nested_var = self.consume().value
+                grouping_factor_type, level1group, level2group = "nested_grouping_factor", grouping_var, nested_var
+            case TokenType.COLON:
+                self.consume()
+                if self.peek().type != TokenType.WORD:
+                    raise UnexpectedTokenError(self)
+                interacting_var = self.consume().value
+                grouping_factor_type, level1group, level2group = "interacting_grouping_factor", grouping_var, interacting_var
+            case _:
+                grouping_factor_type, level1group, level2group = "grouping_factor", grouping_var, None
+        if not self.peek().type == TokenType.RPAREN:
+            raise UnexpectedTokenError(self)
+        self.consume()
+        return RandomEffect(
+            modifier_type=modifier_type,
+            modifier_value=modifier_value,
+            grouping_factor_type=grouping_factor_type,
+            level1group=level1group,
+            level2group=level2group
+        )
+
+
+def evaluate(tree) -> dict[str, list[Contrast | FixedEffect | FixedEffectInteraction | RandomEffect]]:
+    contrasts, indepvar_tree = tree
+    fixed_effects = [FixedEffect(type="intercept", name=None)]
+    random_effects = []
+    unassumed_model = False
+    for node in indepvar_tree:
+        if isinstance(node, FixedEffect):
+            match node.type:
+                case 'invalid':
+                    raise ValueError(f"Received an invalid FixedEffect node. Full list: {fixed_effects}")
+                case 'no_intercept':
+                    fixed_effects.pop(0)
+                case 'continuous' | 'categorical':
+                    fixed_effects.append(node)
+                case 'fir_frame':
+                    unassumed_model = True
+                    fixed_effects.append(node)
+        elif isinstance(node, FixedEffectInteraction):
+            match node.type:
+                case 'interact_expand':
+                    for term in node.terms[:2]:
+                        fixed_effects.append(term)
+                    fixed_effects.append(FixedEffectInteraction(type="interact", terms=node.terms[:2]))
+                case 'interact':
+                    fixed_effects.append(node)
+                case _:
+                    raise ValueError(f"Unexpected FixedEffectInteraction.type {node.type}")
+        elif isinstance(node, RandomEffect):  # Just assume that the only grouping variable is subject for now
+            unassumed_model = True
+            random_effects.append(node)
+    return {
+        "contrasts": contrasts,
+        "fixed_effects": fixed_effects,
+        "random_effects": random_effects,
+        "unassumed_model": unassumed_model
+    }
 
 
 def parse_model_file(model_file: Path) -> tuple[list[str], list[str]]:

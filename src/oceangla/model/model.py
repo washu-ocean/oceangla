@@ -1,7 +1,16 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
+from dataclasses import dataclass
 
 import pandas as pd
+import nibabel as nib
+
+
+@dataclass
+class ModelInputs:
+    effect_img: nib.Nifti1Image | nib.cifti2.cifti2.Cifti2Image
+    fixed_effects_matrix: pd.DataFrame
+    random_effects_matrix: pd.DataFrame
 
 
 class GroupLevelModelResults(ABC):
