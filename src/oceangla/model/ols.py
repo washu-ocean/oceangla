@@ -85,6 +85,7 @@ class OLSModel:
         self.volume_mask = None
         self.__biggest_vol_cluster_sizes = defaultdict(list)
         if self.image_type == "NIFTI":
+            self.out_suffix = ".nii.gz"
             self.voxel_sizes = self.header.get_zooms()[:3]
             # first check if any template resolution matches
 
@@ -120,7 +121,8 @@ class OLSModel:
 
         # surface-specific variables
         self.__biggest_surf_cluster_sizes = defaultdict(list)
-        if self.image_type == "CIFTI":
+        if self.image_type == "CIFTI" and hasattr(self.header.get_axis(1), 'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
+            self.out_suffix = ".dscalar.nii"
             l_surf_img, r_surf_img = get_template_midthicknesses_from_cifti_header(
                 self.header, self.space
             )
@@ -134,12 +136,15 @@ class OLSModel:
             )
             self.l_neigh = build_adjacency_from_faces(self.l_numverts, self.l_faces)
             self.r_neigh = build_adjacency_from_faces(self.r_numverts, self.r_faces)
-        self.l_area = (
-            None if l_area_path is None else nib.load(l_area_path).darrays[0].data
-        )
-        self.r_area = (
-            None if r_area_path is None else nib.load(r_area_path).darrays[0].data
-        )
+            self.l_area = (
+                None if l_area_path is None else nib.load(l_area_path).darrays[0].data
+            )
+            self.r_area = (
+                None if r_area_path is None else nib.load(r_area_path).darrays[0].data
+            )
+        elif self.image_type == "CIFTI" and isinstance(self.header.get_axis(1), nib.cifti2.cifti2_axes.ParcelsAxis):
+            self.out_suffix = ".pscalar.nii"
+
 
     def fit(self):
         if self.perms > 0:
@@ -255,7 +260,7 @@ class OLSModel:
     def _fdr_correct(self):
         if self.image_type == "CIFTI":
             self._fdr_correct_cifti()
-            if self.dlabel_paths is not None:
+            if hasattr(self, 'dlabel_paths') and self.dlabel_paths is not None:
                 for dlabel_path in self.dlabel_paths:
                     self._fdr_correct_cifti(dlabel_path=dlabel_path)
         elif self.image_type == "NIFTI":
@@ -299,7 +304,7 @@ class OLSModel:
             nib.save(
                 fdr_corr_pvals_cifti,
                 p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc)}_fdr_corr_{self.dlabel_path_to_id[dlabel_path]}.dscalar.nii",
+                / f"{sanitize_filename(self.model_desc)}_fdr_corr_{self.dlabel_path_to_id[dlabel_path]}{self.out_suffix}",
             )
             logger.info(f"Saved {p!s}")
         else:
@@ -329,7 +334,7 @@ class OLSModel:
             nib.save(
                 fdr_corr_pvals_cifti,
                 p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc)}_fdr_corr.dscalar.nii",
+                / f"{sanitize_filename(self.model_desc)}_fdr_corr{self.out_suffix}",
             )
             logger.info(f"Saved {p!s}")
 
@@ -438,7 +443,7 @@ class OLSModel:
         nib.save(
             clus_corr_pvals_cifti,
             p := self.model_outdir
-            / f"{sanitize_filename(self.model_desc)}_clus_corr.dscalar.nii",
+            / f"{sanitize_filename(self.model_desc)}_clus_corr{self.out_suffix}",
         )
         logger.info(f"Saved {p!s}")
 
@@ -481,7 +486,7 @@ class OLSModel:
             nib.save(
                 img,
                 p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc)}_{datatype}.dscalar.nii",
+                / f"{sanitize_filename(self.model_desc)}_{datatype}{self.out_suffix}",
             )
             logger.info(f"Saved {p!s}")
             del img
