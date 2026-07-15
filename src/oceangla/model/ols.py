@@ -120,7 +120,7 @@ class OLSModel:
 
         # surface-specific variables
         self.__biggest_surf_cluster_sizes = defaultdict(list)
-        if self.image_type == "CIFTI":
+        if self.image_type == "CIFTI" and hasattr(self.header.get_axis(1), 'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
             l_surf_img, r_surf_img = get_template_midthicknesses_from_cifti_header(
                 self.header, self.space
             )
@@ -134,12 +134,12 @@ class OLSModel:
             )
             self.l_neigh = build_adjacency_from_faces(self.l_numverts, self.l_faces)
             self.r_neigh = build_adjacency_from_faces(self.r_numverts, self.r_faces)
-        self.l_area = (
-            None if l_area_path is None else nib.load(l_area_path).darrays[0].data
-        )
-        self.r_area = (
-            None if r_area_path is None else nib.load(r_area_path).darrays[0].data
-        )
+            self.l_area = (
+                None if l_area_path is None else nib.load(l_area_path).darrays[0].data
+            )
+            self.r_area = (
+                None if r_area_path is None else nib.load(r_area_path).darrays[0].data
+            )
 
     def fit(self):
         if self.perms > 0:
