@@ -404,8 +404,9 @@ class OLSModel:
                     )
                     cluster_size = np.int64(cluster_size)
                     sizes_larger_than_this_cluster = np.float32(
-                        np.sum(self.__biggest_surf_cluster_sizes[alpha])
-                        >= cluster_size
+                        np.sum(
+                            self.__biggest_surf_cluster_sizes[alpha] >= cluster_size
+                        )
                     )
                     r_clus_corr[value_idx * alpha_idx + value_idx, cluster] = (
                         sizes_larger_than_this_cluster / (len(self.__biggest_surf_cluster_sizes[alpha]) + 1)
