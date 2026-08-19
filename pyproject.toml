@@ -9,6 +9,7 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "matplotlib>=3.11.1",
     "nibabel>=5.4.2",
     "nilearn>=0.13.1",
     "numpy>=2.2.6",

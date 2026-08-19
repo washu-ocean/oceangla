@@ -3,11 +3,13 @@ import logging
 from collections import defaultdict, OrderedDict
 from pathlib import Path
 import json
+import math
 
 import nibabel as nib
 import numpy as np
 import pandas as pd
 import progressbar
+import matplotlib.pyplot as plt
 
 # import ipdb
 from nilearn.image import resample_img
@@ -36,6 +38,23 @@ from .volume_utils import (
 logger = logging.getLogger(__name__)
 
 
+def save_null_histogram(
+    data: list | np.ndarray,
+    title: str,
+    out_path: str | Path,
+    units: str = "mm"
+):
+    plt.hist(
+        data,
+        bins=math.floor(math.sqrt(len(data)))
+    )
+    plt.title(title, wrap=True)
+    plt.xlabel(f"Cluster size, in {units}")
+    plt.ylabel("Frequency")
+    plt.savefig(out_path)
+    plt.clf()
+
+
 class OLSModel:
     def __init__(
         self,
@@ -48,6 +67,8 @@ class OLSModel:
         r_area_path: Path | None = None,
         volume_cluster_strategy: str = "NN1",
         dlabel_paths: list[Path] | None = None,
+        separate_null_by_hemisphere: bool = False,
+        separate_null_by_parameter: bool = False,
         **kwargs,
     ):
         self.design_matrix = design_matrix
@@ -72,6 +93,8 @@ class OLSModel:
         self.fwer_corr_pvals = []
         self.clus_corr_pvals = []
         self.volume_cluster_strategy = volume_cluster_strategy
+        self.separate_null_by_hemisphere = separate_null_by_hemisphere
+        self.separate_null_by_parameter = separate_null_by_parameter
         if dlabel_paths is not None:
             self.dlabel_paths = [str(p.resolve()) for p in dlabel_paths]
             self.dlabel_path_to_id = OrderedDict()
@@ -120,7 +143,8 @@ class OLSModel:
                 )
 
         # surface-specific variables
-        self.__biggest_surf_cluster_sizes = defaultdict(list)
+        self.__biggest_l_surf_cluster_sizes = defaultdict(list)
+        self.__biggest_r_surf_cluster_sizes = defaultdict(list)
         if self.image_type == "CIFTI" and hasattr(self.header.get_axis(1), 'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
             self.out_suffix = ".dscalar.nii"
             l_surf_img, r_surf_img = get_template_midthicknesses_from_cifti_header(
@@ -145,7 +169,6 @@ class OLSModel:
         elif self.image_type == "CIFTI" and isinstance(self.header.get_axis(1), nib.cifti2.cifti2_axes.ParcelsAxis):
             self.out_suffix = ".pscalar.nii"
 
-
     def fit(self):
         if self.perms > 0:
             for perm in range(self.perms):
@@ -167,48 +190,33 @@ class OLSModel:
         design_matrix_arr = design_matrix.to_numpy()
         if self.image_type == "CIFTI":
             img_shape = (design_matrix_arr.shape[1], self.activation.shape[1])
+            glm_input_shape = self.activation.shape
         elif self.image_type == "NIFTI":
             img_shape = (*self.activation.shape[:3], design_matrix_arr.shape[1])
+            glm_input_shape = (self.activation.shape[3], math.prod(self.activation.shape[:3]))
         else:
             raise ValueError(f"Cannot fit GLM for image type: {self.image_type}")
-        spatial_slices, no_of_spatial_slices = get_spatial_slices(
-            self.activation, self.image_type, self.volume_mask
+        n, p = design_matrix_arr.shape
+        beta, ssr, rank, s = np.linalg.lstsq(
+            design_matrix_arr,
+            self.activation.reshape(glm_input_shape),
+            rcond=None,
         )
-        pvals = np.full(img_shape, np.nan, dtype=np.float32)
-        tstats = np.full(img_shape, np.nan, dtype=np.float32)
-        betas = np.full(img_shape, np.nan, dtype=np.float32)
-        ses = np.full(img_shape, np.nan, dtype=np.float32)
-        with progressbar.ProgressBar(
-            max_value=no_of_spatial_slices, redirect_stdout=True
-        ) as pbar:
-            for spatial_slice in spatial_slices:
-                try:
-                    n, p = design_matrix_arr.shape
-                    beta, ssr, rank, s = np.linalg.lstsq(
-                        design_matrix_arr,
-                        np.squeeze(self.activation[spatial_slice]),
-                        rcond=None,
-                    )
-                    sigma_sq = ssr[0] / (n - p)
-                    v_cov = (
-                        np.linalg.inv(design_matrix_arr.T @ design_matrix_arr)
-                        * sigma_sq
-                    )
-                    se = np.sqrt(np.diag(v_cov))
-                    tstat = beta / se
-                    pval = np.array(
-                        [2 * (1 - stats.t.cdf(np.abs(t), df=n - p)) for t in tstat]
-                    )
-                    for value_arr, value_vec in (
-                        (betas, beta),
-                        (ses, se),
-                        (tstats, tstat),
-                        (pvals, pval),
-                    ):
-                        value_arr[spatial_slice] = value_vec
-                except np.linalg.LinAlgError:
-                    continue
-                pbar += 1
+        sigma_sq = ssr / (n - p)
+        v_cov_diag = np.repeat(
+            np.diag(np.linalg.inv(design_matrix_arr.T @ design_matrix_arr))[:, np.newaxis],
+            sigma_sq.shape[0],
+            axis=1
+        )
+        se = np.sqrt(
+            v_cov_diag * sigma_sq
+        )
+        tstat = beta / se
+        pval = 2 * (1 - stats.t.cdf(np.abs(tstat), df=n - p))
+        betas = beta.reshape(img_shape)
+        ses = se.reshape(img_shape)
+        tstats = tstat.reshape(img_shape)
+        pvals = pval.reshape(img_shape)
         if permuted_design_matrix is not None:
             self.__add_cluster_sizes(pvals)
         else:
@@ -229,12 +237,12 @@ class OLSModel:
             pvals, self.header, self.l_numverts, self.r_numverts
         )
         for alpha in self.alphas:
-            self.__biggest_surf_cluster_sizes[alpha].extend(
+            self.__biggest_l_surf_cluster_sizes[alpha].extend(
                 get_biggest_surface_clusters(
                     l_pvals, alpha, self.l_neigh, self.l_area
                 )
             )
-            self.__biggest_surf_cluster_sizes[alpha].extend(
+            self.__biggest_r_surf_cluster_sizes[alpha].extend(
                 get_biggest_surface_clusters(
                     r_pvals, alpha, self.r_neigh, self.r_area
                 )
@@ -374,9 +382,21 @@ class OLSModel:
         volume_voxel_indices = self.header.get_axis(1).voxel[(self.header.get_axis(1).voxel != -1).all(axis=1)]
         volume_cifti_indices = np.argwhere((self.header.get_axis(1).voxel != -1).all(axis=1)).flatten()
         for alpha_idx, alpha in enumerate(self.alphas):
-            for value_idx in range(len(self.value_names)):
+            for value_idx, value_name in enumerate(self.value_names):
                 l_mask = np.isfinite(l_pvals[value_idx, :]) & (
                     l_pvals[value_idx, :] < alpha
+                )
+                cluster_null_dist = (
+                    self.__biggest_l_surf_cluster_sizes[alpha] + self.__biggest_r_surf_cluster_sizes[alpha]
+                    if not self.separate_null_by_hemisphere
+                    else self.__biggest_l_surf_cluster_sizes[alpha]
+                )
+                if self.separate_null_by_parameter:
+                    cluster_null_dist = cluster_null_dist[value_idx::len(self.value_names)]
+                save_null_histogram(
+                    cluster_null_dist,
+                    f"Null distribution of cluster sizes at alpha {alpha:.4f}, condition {value_name}, tested against left hemisphere",
+                    self.model_outdir / f"null_lh_alpha{alpha:.4f}_cond{value_name}.png"
                 )
                 for cluster in get_cluster_index_groups(l_mask, self.l_neigh):
                     cluster_size = (
@@ -387,14 +407,26 @@ class OLSModel:
                     cluster_size = np.int64(cluster_size)
                     sizes_larger_than_this_cluster = np.float32(
                         np.sum(
-                            self.__biggest_surf_cluster_sizes[alpha] >= cluster_size
+                            cluster_null_dist >= cluster_size
                         )
                     )
                     l_clus_corr[value_idx * alpha_idx + value_idx, cluster] = (
-                        sizes_larger_than_this_cluster / (len(self.__biggest_surf_cluster_sizes[alpha]) + 1)
+                        sizes_larger_than_this_cluster / (len(cluster_null_dist) + 1)
                     )
                 r_mask = np.isfinite(r_pvals[value_idx, :]) & (
                     r_pvals[value_idx, :] < alpha
+                )
+                cluster_null_dist = (
+                    self.__biggest_l_surf_cluster_sizes[alpha] + self.__biggest_r_surf_cluster_sizes[alpha]
+                    if not self.separate_null_by_hemisphere
+                    else self.__biggest_r_surf_cluster_sizes[alpha]
+                )
+                if self.separate_null_by_parameter:
+                    cluster_null_dist = cluster_null_dist[value_idx::len(self.value_names)]
+                save_null_histogram(
+                    cluster_null_dist,
+                    f"Null distribution of cluster sizes at alpha {alpha:.4f}, condition {value_name}, tested against right hemisphere",
+                    self.model_outdir / f"null_rh_alpha{alpha:.4f}_cond{value_name}.png"
                 )
                 for cluster in get_cluster_index_groups(r_mask, self.r_neigh):
                     cluster_size = (
@@ -405,18 +437,28 @@ class OLSModel:
                     cluster_size = np.int64(cluster_size)
                     sizes_larger_than_this_cluster = np.float32(
                         np.sum(
-                            self.__biggest_surf_cluster_sizes[alpha] >= cluster_size
+                            cluster_null_dist >= cluster_size
                         )
                     )
                     r_clus_corr[value_idx * alpha_idx + value_idx, cluster] = (
-                        sizes_larger_than_this_cluster / (len(self.__biggest_surf_cluster_sizes[alpha]) + 1)
+                        sizes_larger_than_this_cluster / (len(cluster_null_dist) + 1)
                     )
                 volume_mask = volume[..., value_idx] < alpha
                 clus_corr_volume = np.full_like(volume_mask, np.nan, dtype=np.float32)
+                cluster_null_dist = (
+                    self.__biggest_vol_cluster_sizes[alpha]
+                    if not self.separate_null_by_parameter
+                    else self.__biggest_vol_cluster_sizes[alpha][value_idx::len(self.value_names)]
+                )
+                save_null_histogram(
+                    cluster_null_dist,
+                    f"Null distribution of cluster sizes at alpha {alpha:.4f}, condition {value_name}, tested against subcortical voxels",
+                    self.model_outdir / f"null_subcort_alpha{alpha:.4f}_cond{value_name}.png"
+                )
                 for cluster in get_voxel_clusters(volume_mask):
                     cluster_size = np.int64(cluster.shape[0])
-                    sizes_larger_than_this_cluster = np.sum(self.__biggest_vol_cluster_sizes[alpha] >= cluster_size)
-                    clus_p = sizes_larger_than_this_cluster / (len(self.__biggest_vol_cluster_sizes[alpha]) + 1)
+                    sizes_larger_than_this_cluster = np.sum(cluster_null_dist >= cluster_size)
+                    clus_p = sizes_larger_than_this_cluster / (len(cluster_null_dist) + 1)
                     clus_corr_volume[tuple(cluster.T)] = clus_p
                 full_clus_corr[value_idx * alpha_idx + value_idx, tuple(volume_cifti_indices.T)] = clus_corr_volume[tuple(volume_voxel_indices.T)].T
 
@@ -452,10 +494,20 @@ class OLSModel:
         for alpha in self.alphas:
             for value_idx, value_name in enumerate(self.value_names):
                 clus_corr = np.full_like(self.uncorr_pvals[..., value_idx], np.nan)
+                cluster_null_dist = (
+                    self.__biggest_vol_cluster_sizes[alpha]
+                    if not self.separate_null_by_parameter
+                    else self.__biggest_vol_cluster_sizes[alpha][value_idx::len(self.value_names)]
+                )
+                save_null_histogram(
+                    cluster_null_dist,
+                    f"Null distribution of cluster sizes at alpha {alpha:.4f}, condition {value_name}, tested against voxels",
+                    self.model_outdir / f"null_subcort_alpha{alpha:.4f}_cond{value_name}.png"
+                )
                 for cluster in get_voxel_clusters(self.uncorr_pvals[..., value_idx]):
                     cluster_size = np.int64(cluster.shape[0])
-                    sizes_larger_than_this_cluster = np.sum(self.__biggest_vol_cluster_sizes[alpha] >= cluster_size)
-                    clus_p = sizes_larger_than_this_cluster / (len(self.__biggest_vol_cluster_sizes[alpha]) + 1)
+                    sizes_larger_than_this_cluster = np.sum(cluster_null_dist >= cluster_size)
+                    clus_p = sizes_larger_than_this_cluster / (len(cluster_null_dist) + 1)
                     clus_corr[tuple(cluster.T)] = clus_p
                 clus_corr_img = nib.Nifti1Image(clus_corr, self.affine, header=self.header)
                 nib.save(clus_corr_img, p := self.model_outdir / f"{sanitize_filename(self.model_desc)}_beta-{value_name}_clus_corr_{alpha:.4f}.nii.gz")

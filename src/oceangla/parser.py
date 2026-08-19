@@ -195,6 +195,58 @@ def _get_parser():
         help='Strategy for determining which voxels are considered neighbors. Choices are "NN1" (neighbors touch faces, maximum of 6), "NN2" (neighbors touch faces or edges, maximum of 18), or "NN3" (neighbors touch faces, edges, or corners, maximum 26). Default is "NN1".'
     )
     parser.add_argument(
+        "--join_null_across_parameters",
+        "--join-null-across-parameters",
+        dest="separate_null_by_parameter",
+        action="store_false",
+        help="When using the --perms flag, --join-null-across-parameters determines that we shouldn't "
+        "create separate null distributions of maximum cluster sizes for each condition, but instead "
+        "include maximum cluster sizes from each condition to the same null distribution, for each "
+        "permutation. For example, with this flag set, an OLS model with parameters 'intercept', 'age', and 'quiz_score' "
+        "will include the maximum cluster sizes from each of these conditions to the same null distribution "
+        "at each permutation, then compute p-values for each cluster based on this all-inclusive null distribution. "
+        "When not set, a null distribution is created for each individual condition. This "
+        "flag can be used in conjunction with --join-null-across-hemispheres for CIFTI data."
+    )
+    parser.add_argument(
+        "--join_null_across_hemispheres",
+        "--join-null-across-hemispheres",
+        dest="separate_null_by_hemisphere",
+        action="store_false",
+        help="When using the --perms flag, --join-null-across-hemispheres determines that we shouldn't "
+        "create separate null distributions of maximum cluster sizes for each hemisphere, instead of "
+        "including maximum cluster sizes from both hemispheres to the same null distribution, for each "
+        "permutation. This flag can be used in conjunction with --join-null-across-parameters. Only applies "
+        "when CIFTI data is input."
+    )
+    parser.add_argument(
+        "--cluster_size_grouping", "--cluster-size-grouping",
+        dest="cluster_grouping_strategy",
+        choices=[
+            "across_conditions_and_structures",
+            "across_conditions_within_structures",
+            "within_conditions_across_structures",
+            "within_conditions_within_structures"
+        ],
+        default="across_conditions_across_structures",
+        help="When generating a null distribution of maximum cluster sizes with --perms to generate cluster p-values, "
+        "this flag specifies whether and how to separate the null distribution across different model conditions and "
+        "left/right hemisphere structures, if CIFTI input is used. "
+        "'--cluster_size_grouping across_conditions_and_structures' will "
+        "create one null distribution including maximum cluster sizes across both left/right hemispheres for each "
+        "condition (for example, a model with intercept, age effect, and ADHD score effect will append 6 cluster "
+        "sizes to the null distribution on each permutation). '--cluster_size_grouping across_conditions_within_structures' "
+        "will create 2 separate null distributions for each hemisphere, but include max cluster sizes from each condition "
+        "into each (the last example will have 2 null distributions where 3 cluster sizes are appended on each permutation). "
+        "'--cluster_size_grouping within_conditions_across_structures' will create a separate null distribution for each "
+        "condition, but add the maximum cluster sizes from both hemisphere to each null distribution. "
+        "'--cluster_size_grouping within_conditions_within_structures' will create a separate null distribution for each "
+        "condition/hemisphere pair. Note: clusters in volume space (in both NIFTI and subcortical CIFTI) will always "
+        "have its own null distribution that will never integrate sizes found in surface space, but this can be "
+        "subdivided into multiple null distributions depending on whether a 'within_conditions' option is chosen. "
+        "Default is 'across_conditions_across_structures.'"
+    )
+    parser.add_argument(
         "--session-name",
         "--session_name",
         "--sessionname",

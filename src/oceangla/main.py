@@ -69,7 +69,9 @@ def run_ols_model(model: str, model_name: str, space: str, task: str):
         perms=config.perms,
         alpha=config.alphas,
         volume_cluster_strategy=config.volume_cluster_strategy,
-        dlabel_paths=config.dlabel_paths
+        dlabel_paths=config.dlabel_paths,
+        separate_null_by_hemisphere=config.separate_null_by_hemisphere,
+        separate_null_by_parameter=config.separate_null_by_parameter
     ).fit()
 
 

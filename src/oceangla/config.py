@@ -17,6 +17,8 @@ class config:  # All attributes are set in parser.py parse_args()
     reindex: bool = False
     perms: int = 0
     preprocdir_paths: list[Path] | None = None
+    separate_null_by_hemisphere: bool = True
+    separate_null_by_parameter: bool = True
     session_name: list[str] | None = None
     var_paths: list[Path] | None = None
     vertex_area_map_paths: tuple[Path, Path] | None = None
