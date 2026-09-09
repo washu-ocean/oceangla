@@ -75,7 +75,7 @@ def populate_db(db_path: Path,
 
         for fladir in fladirs:
             files_of_interest.extend(
-                fladir.glob("sub-*/ses-*/func/*condition*stat-effect_boldmap*")
+                fladir.glob("sub-*/ses-*/func/sub*condition*stat-effect_boldmap*")  # Include 'sub' at beginning of filename to avoid '._'-prefixed files
             )
 
         row_regex = re.compile(r'sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\-]+)_condition-([a-zA-Z0-9\-]+)_*stat-effect_boldmap(.*)')
