@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import re
 import sqlite3
 import time
@@ -80,22 +81,34 @@ def populate_db(db_path: Path,
 
         row_regex = re.compile(r'sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\-]+)_condition-([a-zA-Z0-9\-]+)_*stat-effect_boldmap(.*)')
 
-        def __build_path_row(p: Path) -> dict:
+        paths_with_no_row = []
+
+        def __build_path_row(p: Path) -> dict | None:
             row = {}
             row["path"] = str(p)
             row["fladir"] = str(p.parent.parent.parent.parent.resolve())
-            (
-                row["subject"],
-                row["session"],
-                row["task"],
-                row["space"],
-                row["condition"],
-                row["suffix"]
-            ) = re.search(row_regex, p.name).group(1,2,3,4,5,6)
-            logger.debug(f"Built row for {p.resolve()!s}")
-            return row
+            try:
+                (
+                    row["subject"],
+                    row["session"],
+                    row["task"],
+                    row["space"],
+                    row["condition"],
+                    row["suffix"]
+                ) = re.search(row_regex, p.name).group(1,2,3,4,5,6)
+                logger.debug(f"Built row for {p.resolve()!s}")
+                return row
+            except AttributeError:
+                paths_with_no_row.append(p)
+                logger.error(f"Could not build database row with path: {p}")
+                logger.error("Attempted to use pattern: sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\\-]+)_condition-([a-zA-Z0-9\\-]+)_*stat-effect_boldmap(.*)")
+                return None
 
-        db_data = [__build_path_row(p) for p in files_of_interest]
+        db_data = [__build_path_row(p) for p in files_of_interest if p is not None]
+        if len(paths_with_no_row) > 0:
+            logger.warning("Could not build database rows for these paths:")
+            logger.warning('\n'.join([str(p) for p in paths_with_no_row]))
+
         cur.executemany(
             "INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :fladir);",
             db_data,
