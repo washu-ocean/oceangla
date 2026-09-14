@@ -108,11 +108,21 @@ def _get_parser():
         "and they will be assigned in the same order as models are specified. The outputs for each model will be stored "
         "in a folder named after this, under the folder specified by `-o`.",
     )
-    parser.add_argument(
+    reindex_group = parser.add_mutually_exclusive_group()
+    reindex_group.add_argument(
         "--reindex",
+        dest="reindex",
         action="store_true",
         help="Recreate the sqlite database of first-level outputs if one "
-        "already exists.",
+        "already exists (this option is deprecated and will be removed soon).",
+        deprecated=True
+    )
+    reindex_group.add_argument(
+        "--no-reindex",
+        dest="reindex",
+        action="store_false",
+        help="Don't recreate the sqlite database of first-level outputs if one "
+        "already exists."
     )
     parser.add_argument(
         "-c", "--config", type=Path, help="Path to a config .toml file."
