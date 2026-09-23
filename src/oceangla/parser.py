@@ -114,8 +114,7 @@ def _get_parser():
         dest="reindex",
         action="store_true",
         help="Recreate the sqlite database of first-level outputs if one "
-        "already exists (this option is deprecated and will be removed soon).",
-        deprecated=True
+        "already exists (this option is deprecated and will be removed soon)."
     )
     reindex_group.add_argument(
         "--no-reindex",
@@ -268,6 +267,12 @@ def _get_parser():
                         Here's an example where each BIDS session name is 'ses-01': ``--session-name 01``. Here's another
                         with different pre- and post- sessions: ``--session-name pre post``. By default, will run
                         for each unique session name.""",
+    )
+    parser.add_argument(
+        "--just-build-db", "--just_build_db",
+        action="store_true",
+        dest="just_build_db",
+        help="Build the database, then exit."
     )
     return parser
 

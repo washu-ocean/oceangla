@@ -6,6 +6,7 @@ import sqlite3
 import time
 from collections import defaultdict
 from pathlib import Path
+import traceback
 
 import nibabel as nib
 import numpy as np
@@ -19,6 +20,7 @@ from .error import (
     print_unique_tasks,
 )
 from .formula import FormulaParser, Token, TokenType, is_scaled_value_node
+from .config import config
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,9 @@ def populate_db(db_path: Path,
         if reindex or not __db_is_valid(db_path):
             db_path.unlink()
         else:
+            if config.just_build_db:
+                logger.info("--just-build-db was set, and database was already built. Exiting now")
+                sys.exit()
             return db_path
     logger.debug(
         f"{'Reindexing' if reindex else 'Creating'} sqlite db file at {db_path}"
@@ -69,7 +74,7 @@ def populate_db(db_path: Path,
             condition TEXT,
             suffix TEXT,
             space TEXT,
-            fladir TEXT
+            frame_no INTEGER
         );""")
 
         files_of_interest = []
@@ -86,7 +91,6 @@ def populate_db(db_path: Path,
         def __build_path_row(p: Path) -> dict | None:
             row = {}
             row["path"] = str(p)
-            row["fladir"] = str(p.parent.parent.parent.parent.resolve())
             try:
                 (
                     row["subject"],
@@ -96,12 +100,18 @@ def populate_db(db_path: Path,
                     row["condition"],
                     row["suffix"]
                 ) = re.search(row_regex, p.name).group(1,2,3,4,5,6)
+                if len(row["condition"].split("-")) > 1 and (frame_no_match := re.match(r'\d\d', row["condition"].split("-")[-1])):
+                    row["frame_no"] = int(frame_no_match.group())
+                    row["condition"] = row["condition"].removesuffix(f"-{frame_no_match.group()}")
+                else:
+                    row["frame_no"] = -1  # not a frame in an FIR response
                 logger.debug(f"Built row for {p.resolve()!s}")
                 return row
             except AttributeError:
                 paths_with_no_row.append(p)
                 logger.error(f"Could not build database row with path: {p}")
                 logger.error("Attempted to use pattern: sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\\-]+)_condition-([a-zA-Z0-9\\-]+)_*stat-effect_boldmap(.*)")
+                logger.error("Error found", exc_info=True)
                 return None
 
         db_data = [__build_path_row(p) for p in files_of_interest if p is not None]
@@ -110,7 +120,7 @@ def populate_db(db_path: Path,
             logger.warning('\n'.join([str(p) for p in paths_with_no_row]))
 
         cur.executemany(
-            "INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :fladir);",
+            "INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :frame_no);",
             db_data,
         )
         cur.execute("""
@@ -157,6 +167,9 @@ def populate_db(db_path: Path,
         con.commit()
 
     logger.debug("DB created successfully!")
+    if config.just_build_db:
+        logger.info("--just-build-db was set, exiting now")
+        sys.exit()
     return db_path
 
 

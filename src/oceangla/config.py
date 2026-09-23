@@ -10,6 +10,7 @@ class config:  # All attributes are set in parser.py parse_args()
     dlabel_paths: list[Path] | None = None
     fladir_paths: list[Path] | None = None
     indepvar: list[str] | None = None
+    just_build_db: bool = False
     models: list[str] = []
     model_file: Path | None = None
     model_names: list[str] = []
