@@ -9,7 +9,7 @@ from pathvalidate import sanitize_filename
 
 logger = logging.getLogger(__name__)
 
-VALID_FUNCS = ("Z",)
+VALID_FUNCS = ("onesampttest", "rmanova")
 
 
 class TokenType(Enum):
@@ -21,9 +21,11 @@ class TokenType(Enum):
     MUL = auto()
     INTERACT = auto()
     INTERCEPT = auto()
+    FUNCNAME = auto()
     NUMBER = auto()
     LPAREN = auto()
     RPAREN = auto()
+    COMMA = auto()
     ALL_INDIVIDUAL_CONDITIONS = auto()
     PIPE = auto()
     ZSCORE = auto()
@@ -34,14 +36,14 @@ INTERCEPT_TOKEN = Token(type=TokenType.INTERCEPT, value="1")
 
 
 def lex_formula_str(formula_str: str) -> list[Token]:
-    if "~" not in formula_str:
-        raise ValueError(
-            "Invalid model spec; must include char '~' to separate dependent from independent variables."
-        )
-    elif formula_str.count("~") != 1:
-        raise ValueError(
-            "Invalid model spec; dependent/independent variable separator '~' can only be included once."
-        )
+    # if "~" not in formula_str:
+    #     raise ValueError(
+    #         "Invalid model spec; must include char '~' to separate dependent from independent variables."
+    #     )
+    # elif formula_str.count("~") != 1:
+    #     raise ValueError(
+    #         "Invalid model spec; dependent/independent variable separator '~' can only be included once."
+    #     )
     pos = 0
 
     tokens = []
@@ -85,51 +87,6 @@ def lex_formula_str(formula_str: str) -> list[Token]:
     return tokens
 
 
-def _get_depvars_from_tokens(tokens) -> list[str]:
-    """
-    Return a list of strings denoting the condition(s) to include in the contrast
-    representing the dependent variable in a GLM.
-
-    Strings in the returned list will be prepended with a "+" or "-", which signifies
-    they'll be scaled either by 1 or -1 in the contrast.
-
-    Example outputs:
-
-    ["+correct"] -> dependent variable should be all subjects' "correct" statistical map
-    at the first level
-
-    ["+correct" "-incorrect"] -> dependent variable is a contrast representing the difference
-    between "correct" and "incorrect" conditions for each subject. The contrast map will be made
-    if it does not exist
-
-    ["+correct" "+incorrect"] -> dependent variable represents average of "correct" and "incorrect"
-    conditions for each subject
-    """
-    pos = 0
-    depvars = []
-    while pos < len(tokens):
-        if tokens[pos].type in (TokenType.PLUS, TokenType.MINUS):
-            if not pos + 1 < len(tokens):
-                raise ValueError(
-                    f"Cannot have token '{tokens[pos].value}' at end of depvar."
-                )
-            if not tokens[pos + 1].type == TokenType.VAR:
-                raise ValueError(
-                    f"Illegal token after '{tokens[pos].value}' : '{tokens[pos + 1].value}'"
-                )
-            depvars.append(f"{tokens[pos].value}{tokens[pos + 1].value}")
-            pos += 2
-        elif tokens[pos].type == TokenType.VAR and len(depvars) == 0:
-            depvars.append(f"+{tokens[pos].value}")
-            pos += 1
-        elif tokens[pos].type == TokenType.INTERCEPT:
-            depvars.append(f"+{tokens[pos].value}")
-            pos += 1
-        else:
-            raise ValueError(f"Illegal token in depvar: {tokens[pos]}")
-    return depvars
-
-
 class UnexpectedTokenError(Exception):
     def __init__(self, parser):
         super().__init__(f"Unexpected token: {parser.peek()!r}")
@@ -165,34 +122,36 @@ class FormulaParser:
             )
         self.tree = self.parse()
 
-    def __str__(self):
-        s = ""
-        if self.tree is None:
-            return s
-        deptree, indeptree = self.tree
-        for node in deptree:
-            s += f"({node[0][0].value}{node[0][1].value}){node[1].value} "
-        s += "~ "
-        for node in indeptree:
-            if isinstance(node, Token) and node.type == TokenType.INTERCEPT:
-                s += "intercept "
-            elif is_scaled_value_node(node):
-                s += f"({node[0][0].value}{node[0][1].value}){node[1].value} "
-            elif isinstance(node, list) and node[0].type == TokenType.MUL:
-                childnodes = [
-                    f"({childnode[0][0].value}{childnode[0][1].value}){childnode[1].value}"
-                    for childnode in node[1:]
-                ]
-                interaction_term = ":".join(childnodes)
-                s += " ".join([*childnodes, interaction_term])
-            elif isinstance(node, list) and node[0].type == TokenType.INTERACT:
-                childnodes = [
-                    f"({childnode[0][0].value}{childnode[0][1].value}){childnode[1].value}"
-                    for childnode in node[1:]
-                ]
-                interaction_term = ":".join(childnodes)
-                s += f" {interaction_term} "
-        return s.strip()
+    # May get around to reimplementing this with the new syntax
+    # 
+    # def __str__(self):
+    #     s = ""
+    #     if self.tree is None:
+    #         return s
+    #     deptree, indeptree = self.tree
+    #     for node in deptree:
+    #         s += f"({node[0][0].value}{node[0][1].value}){node[1].value} "
+    #     s += "~ "
+    #     for node in indeptree:
+    #         if isinstance(node, Token) and node.type == TokenType.INTERCEPT:
+    #             s += "intercept "
+    #         elif is_scaled_value_node(node):
+    #             s += f"({node[0][0].value}{node[0][1].value}){node[1].value} "
+    #         elif isinstance(node, list) and node[0].type == TokenType.MUL:
+    #             childnodes = [
+    #                 f"({childnode[0][0].value}{childnode[0][1].value}){childnode[1].value}"
+    #                 for childnode in node[1:]
+    #             ]
+    #             interaction_term = ":".join(childnodes)
+    #             s += " ".join([*childnodes, interaction_term])
+    #         elif isinstance(node, list) and node[0].type == TokenType.INTERACT:
+    #             childnodes = [
+    #                 f"({childnode[0][0].value}{childnode[0][1].value}){childnode[1].value}"
+    #                 for childnode in node[1:]
+    #             ]
+    #             interaction_term = ":".join(childnodes)
+    #             s += f" {interaction_term} "
+    #     return s.strip()
 
     def reset(self):
         self.tokens = self.orig_tokens
@@ -211,6 +170,43 @@ class FormulaParser:
         return token
 
     def parse(self):
+        return self.statement()
+        # depvar = self.depvar()
+        # indepvar = self.indepvar()
+        # return (depvar, indepvar)
+
+    def statement(self):
+        if len(list(filter(lambda t : t.type == TokenType.TILDE), self.tokens)) == 1:
+            return self.expression()
+        else:
+            return self.function()
+
+    def function(self):
+        if self.peek().type != TokenType.VAR:
+            raise UnexpectedTokenError(self)
+        elif self.peek().value not in VALID_FUNCS:
+            raise UnexpectedTokenError(self)
+        funcname = self.consume().value
+        if self.consume().type != TokenType.LPAREN:
+            raise UnexpectedTokenError(self)
+        arglist = self.arglist()
+        if self.consume().type != TokenType.RPAREN:
+            raise UnexpectedTokenError(self)
+        return (funcname, arglist)
+
+    def arglist(self):
+        arglist = []
+        if self.peek().type != TokenType.VAR:
+            raise UnexpectedTokenError(self)
+        arglist.append(self.consume().value)
+        while self.peek().type == TokenType.COMMA:
+            self.consume()
+            if self.peek().type != TokenType.VAR:
+                raise UnexpectedTokenError(self)
+            arglist.append(self.consume().value)
+        return arglist
+
+    def expression(self):
         depvar = self.depvar()
         indepvar = self.indepvar()
         return (depvar, indepvar)
