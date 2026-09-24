@@ -86,7 +86,7 @@ class UnexpectedTokenError(Exception):
         if isinstance(expected_token_type, TokenType):
             super().__init__(f"Unexpected token: {received_token!r}. Expected type {expected_token_type!r}")
         else:
-            super().__init__(f"Unexpected token: {received_token!r}. Expected one of {expected_token_type!r}")=
+            super().__init__(f"Unexpected token: {received_token!r}. Expected one of {expected_token_type!r}")
 
 
 def eval_scalar(name: str) -> str:
@@ -274,7 +274,7 @@ def parse_model_file(model_file: Path) -> tuple[list[str], list[str]]:
                 arrow '->'. Example file contents:
 
                 model1     ->     depvar ~ indepvar1 + indepvar2
-
+                model2     ->     fir_rmanova(oddball)
                 ^                 ^
                 |                 |
                 model name        model spec
