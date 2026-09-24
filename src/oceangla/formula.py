@@ -1,3 +1,4 @@
+from copy import deepcopy
 import logging
 import re
 from collections import namedtuple
@@ -9,7 +10,7 @@ from pathvalidate import sanitize_filename
 
 logger = logging.getLogger(__name__)
 
-VALID_FUNCS = ("onesampttest", "rmanova")
+VALID_FUNCS = ("onesampttest", "fir_rmanova")
 
 
 class TokenType(Enum):
@@ -105,6 +106,14 @@ def is_scaled_value_node(node):
     )
 
 
+def eval_scalar(name: str) -> str:
+    minuses = 0
+    for i in range(len(name)):
+        if name[i] == "-":
+            minuses += 1
+    return "+" if minuses % 2 == 0 else "-"
+
+
 class FormulaParser:
     def __init__(self, tokens):
         self.pos = 0
@@ -123,7 +132,7 @@ class FormulaParser:
         self.tree = self.parse()
 
     # May get around to reimplementing this with the new syntax
-    # 
+    #
     # def __str__(self):
     #     s = ""
     #     if self.tree is None:
@@ -169,33 +178,33 @@ class FormulaParser:
         self.pos += 1
         return token
 
-    def parse(self):
+    def parse(self) -> dict[str, list]:
         return self.statement()
         # depvar = self.depvar()
         # indepvar = self.indepvar()
         # return (depvar, indepvar)
 
-    def statement(self):
-        if len(list(filter(lambda t : t.type == TokenType.TILDE), self.tokens)) == 1:
+    def statement(self) -> dict[str, list]:
+        if len(list(filter(lambda t: t.type == TokenType.TILDE, self.tokens))) == 1:
             return self.expression()
         else:
             return self.function()
 
-    def function(self):
+    def function(self) -> dict[str, list]:
         if self.peek().type != TokenType.VAR:
             raise UnexpectedTokenError(self)
         elif self.peek().value not in VALID_FUNCS:
             raise UnexpectedTokenError(self)
-        funcname = self.consume().value
+        funcname=self.consume().value
         if self.consume().type != TokenType.LPAREN:
             raise UnexpectedTokenError(self)
-        arglist = self.arglist()
+        arglist=self.arglist()
         if self.consume().type != TokenType.RPAREN:
             raise UnexpectedTokenError(self)
-        return (funcname, arglist)
+        return {funcname: arglist}
 
-    def arglist(self):
-        arglist = []
+    def arglist(self) -> list[str]:
+        arglist=[]
         if self.peek().type != TokenType.VAR:
             raise UnexpectedTokenError(self)
         arglist.append(self.consume().value)
@@ -206,107 +215,89 @@ class FormulaParser:
             arglist.append(self.consume().value)
         return arglist
 
-    def expression(self):
-        depvar = self.depvar()
-        indepvar = self.indepvar()
-        return (depvar, indepvar)
+    def expression(self) -> dict[str, list]:
+        depvar=self.depvar()
+        indepvar=self.indepvar()
+        return {
+            "depvars": depvar,
+            "indepvars": indepvar
+        }
 
     def depvar(self):
-        nodes = []
-        nodes.append(self.unscaled_var())
+        depvarnames=[]
+        depvarnames.append(self.depvarname())
         while self.peek().type != TokenType.TILDE:
-            nodes.append(self.scaled_var())
+            depvarnames.append(self.depvarname())
         self.consume()
-        return nodes
+        return depvarnames
 
-    def unscaled_var(self):
-        if self.peek().type in (TokenType.PLUS, TokenType.MINUS, TokenType.LPAREN):
-            return self.scaled_var()
-        elif self.peek().type in (TokenType.PLUS, TokenType.MINUS, TokenType.LPAREN):
-            return self.scaled_var()
-        elif (
-            self.peek().type == TokenType.VAR
-        ):  # Scale by positive 1 when no scalar present
-            op = (
-                Token(type=TokenType.PLUS, value="+"),
-                Token(type=TokenType.NUMBER, value="1"),
-            )
-            varname = self.consume()
-            return (op, varname)
-        elif (
-            self.peek().type == TokenType.ALL_INDIVIDUAL_CONDITIONS
-        ):  # Scale by positive 1 when no scalar present
-            op = self.consume()
-            if (
-                not self.peek().type == TokenType.TILDE
-            ):  # Nothing besides {ALL} should be left of the tilde
-                raise UnexpectedTokenError(self)
-            return op
-        else:
-            raise UnexpectedTokenError(self)
+    def depvarname(self):
+        name=""
 
-    def scaled_var(self):
-        op = self.scalar()
-        if not self.peek().type == TokenType.VAR:
-            raise UnexpectedTokenError(self)
-        varname = self.consume()
-        return (op, varname)
+        while self.peek().type in (TokenType.PLUS, TokenType.MINUS):
+            name += self.consume().value
 
-    def scalar(self):
-        if self.peek().type in (TokenType.PLUS, TokenType.MINUS):
-            sign = self.consume()
-            scalar = Token(type=TokenType.NUMBER, value="1")
-            return (sign, scalar)
-        elif self.peek().type == TokenType.LPAREN:
-            self.consume()
-            if self.peek().type not in (
-                TokenType.PLUS,
-                TokenType.MINUS,
-                TokenType.NUMBER,
-            ):
-                raise UnexpectedTokenError(self)
-            if self.peek().type == TokenType.NUMBER:
-                sign = Token(type=TokenType.PLUS, value="+")
-                scalar = self.consume()
-            elif self.peek().type in (TokenType.PLUS, TokenType.MINUS):
-                sign = self.consume()
-                if not self.peek().type == TokenType.NUMBER:
-                    raise UnexpectedTokenError(self)
-                scalar = self.consume()
-            if not self.peek().type == TokenType.RPAREN:
-                raise UnexpectedTokenError(self)
-            return (sign, scalar)
-        else:
+        name="+" if name == "" else eval_scalar(name)  # add scalar if one not present
+
+        if self.peek().type != TokenType.VAR:
             raise UnexpectedTokenError(self)
+        name += self.consume().value
+        return name
 
     def indepvar(self):
-        nodes = []
+        indepvars=[]
         if self.peek() == Token(type=TokenType.NUMBER, value="1"):
-            nodes.append(INTERCEPT_TOKEN)
             self.consume()
-        else:
-            nodes.append(self.interaction(start=True))
+        indepvars.extend(self.interaction())
         while self.peek().type in (TokenType.PLUS, TokenType.MINUS, TokenType.LPAREN):
-            nodes.append(self.interaction())
-        if INTERCEPT_TOKEN not in nodes:
-            nodes.insert(0, INTERCEPT_TOKEN)
-        return nodes
+            indepvars.extend(self.interaction())
+        if "intercept" not in indepvars:
+            indepvars.insert(0, "intercept")
+        return indepvars
 
-    def interaction(self, start=False):
-        node = self.unscaled_var() if start else self.scaled_var()
-        if self.peek().type in (TokenType.MUL, TokenType.INTERACT):
-            op = self.consume()
-            right = self.unscaled_var()
-            node = [op, node, right]
-        while isinstance(node, list) and self.peek().type == node[0].type:
-            node.append(self.unscaled_var())
-        return node
+    def interaction(self):
+        names=[""]
+        while self.peek().type in (TokenType.PLUS, TokenType.MINUS):
+            names[0] += self.consume().value
+        names[0]="+" if names[0] == "" else eval_scalar(names[0])
+        if self.peek().type != TokenType.VAR:
+            raise UnexpectedTokenError(self)
+        names[0] += self.consume().value
+        op=None  # We can't chain expanded and explicit interactions, i.e. a*b:c would be an invalid interaction term, so we choose only one
+        while self.peek().type in (TokenType.MUL, TokenType.INTERACT):
+            if self.peek().type == TokenType.MUL and op in (None, TokenType.MUL):
+                if op is None:
+                    op=TokenType.MUL
+                self.consume()
+                names.append("")
+                while self.peek().type in (TokenType.PLUS, TokenType.MINUS):
+                    names[-1] += self.consume().value
+                names[-1]="+" if names[-1] == "" else eval_scalar(names[-1])
+                if self.peek().type != TokenType.VAR:
+                    raise UnexpectedTokenError(self)
+                names[-1] += self.consume().value
+                cur_name = names[-1]
+                names_ = deepcopy(names)
+                for name in names_[:-1]:
+                    names.append(f"{name}:{cur_name}")
+            elif self.peek().type == TokenType.INTERACT and op in (None, TokenType.INTERACT):
+                if op is None:
+                    op=TokenType.INTERACT
+                self.consume()
+                sign=""
+                while self.peek().type in (TokenType.PLUS, TokenType.MINUS):
+                    sign += self.consume().value
+                sign="+" if sign == "" else eval_scalar(sign)
+                if self.peek().type != TokenType.VAR:
+                    raise UnexpectedTokenError(self)
+                names[0].append(f":{sign}{self.consume().value}")
+        return names
 
 
 def parse_model_file(model_file: Path) -> tuple[list[str], list[str]]:
-    model_names, models = [], []
+    model_names, models=[], []
     with open(model_file) as f:
-        lines = f.readlines()
+        lines=f.readlines()
     for line in lines:
         if len(re.findall("->", line)) != 1:
             raise ValueError(
@@ -314,7 +305,7 @@ def parse_model_file(model_file: Path) -> tuple[list[str], list[str]]:
                 "must contain one arrow -> separating the model "
                 "name on the left, and the formula on the right."
             )
-        model_name, formula = [chunk.strip() for chunk in line.split("->")]
+        model_name, formula=[chunk.strip() for chunk in line.split("->")]
         if len(model_name) == 0 or len(formula) == 0:
             raise ValueError(
                 dedent(f"""
@@ -329,7 +320,7 @@ def parse_model_file(model_file: Path) -> tuple[list[str], list[str]]:
                 model name        model spec
                 """)
             )
-        model_name = sanitize_filename(model_name)
+        model_name=sanitize_filename(model_name)
         FormulaParser(formula)  # quick parse, should error out if invalid
         model_names.append(model_name)
         models.append(formula)
