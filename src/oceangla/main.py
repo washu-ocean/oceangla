@@ -3,8 +3,14 @@ import sys
 from importlib import metadata
 from collections import defaultdict
 
+import pandas as pd
+
 from .config import config
-from .data import populate_db,get_activation_and_design_matrix
+from .data import (
+    populate_subject_activation_tsv,
+    populate_indepvar_tsv,
+    get_activation_and_design_matrix
+)
 from .model import OLSModel
 from .parser import parse_args
 from .prompt import prompt_space, prompt_task

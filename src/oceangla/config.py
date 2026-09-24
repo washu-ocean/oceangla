@@ -5,7 +5,6 @@ from joblib import Memory
 
 class config:  # All attributes are set in parser.py parse_args()
     alphas: list[float] = [0.05]
-    db_path: str | None = None
     depvar: list[str] | None = None
     dlabel_paths: list[Path] | None = None
     fladir_paths: list[Path] | None = None
@@ -21,6 +20,9 @@ class config:  # All attributes are set in parser.py parse_args()
     separate_null_by_hemisphere: bool = True
     separate_null_by_parameter: bool = True
     session_name: list[str] | None = None
+    standardization_method: str = "zscore"
+    subject_activation_path: Path | None = None
+    subject_variables_path: Path | None = None
     var_paths: list[Path] | None = None
     vertex_area_map_paths: tuple[Path, Path] | None = None
     version: str | None = None

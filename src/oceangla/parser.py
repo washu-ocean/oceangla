@@ -269,6 +269,13 @@ def _get_parser():
                         for each unique session name.""",
     )
     parser.add_argument(
+        "--standardization-method", "--standardization_method",
+        dest="standardization_method",
+        choices=("zscore", "meancenter", "none"),
+        default="zscore",
+        help="Method used to standardize continuous subject variables."
+    )
+    parser.add_argument(
         "--just-build-db", "--just_build_db",
         action="store_true",
         dest="just_build_db",

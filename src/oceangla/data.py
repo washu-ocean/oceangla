@@ -46,143 +46,121 @@ def __db_is_valid(db_path: Path) -> bool:
     )
     return True
 
+ROW_REGEX = re.compile(r'sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\-]+)_condition-([a-zA-Z0-9\-]+)_*stat-effect_boldmap(.*)')
 
-def populate_db(db_path: Path,
-                fladirs: list[Path],
-                var_paths: list[Path],
-                reindex: bool = False) -> Path:
-    if db_path.is_file():
-        if reindex or not __db_is_valid(db_path):
-            db_path.unlink()
+def build_subject_activation_row_from_path(p: Path) -> dict | None:
+    row = {}
+    row["path"] = str(p)
+    try:
+        (
+            row["subject"],
+            row["session"],
+            row["task"],
+            row["space"],
+            row["condition"],
+            row["suffix"]
+        ) = re.search(ROW_REGEX, p.name).group(1,2,3,4,5,6)
+        if len(row["condition"].split("-")) > 1 and (frame_no_match := re.match(r'\d\d', row["condition"].split("-")[-1])):
+            row["frame_no"] = int(frame_no_match.group())
+            row["condition"] = row["condition"].removesuffix(f"-{frame_no_match.group()}")
         else:
-            if config.just_build_db:
-                logger.info("--just-build-db was set, and database was already built. Exiting now")
-                sys.exit()
-            return db_path
-    logger.debug(
-        f"{'Reindexing' if reindex else 'Creating'} sqlite db file at {db_path}"
-    )
-    with sqlite3.connect(db_path) as con:
-        cur = con.cursor()
-        cur.execute("DROP TABLE IF EXISTS subject_activation")
-        cur.execute("""
-        CREATE TABLE subject_activation(
-            subject TEXT,
-            session TEXT,
-            task TEXT,
-            path TEXT,
-            condition TEXT,
-            suffix TEXT,
-            space TEXT,
-            frame_no INTEGER
-        );""")
+            row["frame_no"] = -1  # not a frame in an FIR response
+        logger.debug(f"Built row for {p.resolve()!s}")
+        return row
+    except AttributeError:
+        logger.error(f"Could not build database row with path: {p}")
+        logger.error("Attempted to use pattern: sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\\-]+)_condition-([a-zA-Z0-9\\-]+)_*stat-effect_boldmap(.*)")
+        logger.error("Error found", exc_info=True)
+        return None
 
-        files_of_interest = []
 
-        for fladir in fladirs:
-            files_of_interest.extend(
-                fladir.glob("sub-*/ses-*/func/sub*condition*stat-effect_boldmap*")  # Include 'sub' at beginning of filename to avoid '._'-prefixed files
-            )
-
-        row_regex = re.compile(r'sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\-]+)_condition-([a-zA-Z0-9\-]+)_*stat-effect_boldmap(.*)')
-
-        paths_with_no_row = []
-
-        def __build_path_row(p: Path) -> dict | None:
-            row = {}
-            row["path"] = str(p)
-            try:
-                (
-                    row["subject"],
-                    row["session"],
-                    row["task"],
-                    row["space"],
-                    row["condition"],
-                    row["suffix"]
-                ) = re.search(row_regex, p.name).group(1,2,3,4,5,6)
-                if len(row["condition"].split("-")) > 1 and (frame_no_match := re.match(r'\d\d', row["condition"].split("-")[-1])):
-                    row["frame_no"] = int(frame_no_match.group())
-                    row["condition"] = row["condition"].removesuffix(f"-{frame_no_match.group()}")
-                else:
-                    row["frame_no"] = -1  # not a frame in an FIR response
-                logger.debug(f"Built row for {p.resolve()!s}")
-                return row
-            except AttributeError:
-                paths_with_no_row.append(p)
-                logger.error(f"Could not build database row with path: {p}")
-                logger.error("Attempted to use pattern: sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\\-]+)_condition-([a-zA-Z0-9\\-]+)_*stat-effect_boldmap(.*)")
-                logger.error("Error found", exc_info=True)
-                return None
-
-        db_data = [__build_path_row(p) for p in files_of_interest if p is not None]
-        if len(paths_with_no_row) > 0:
-            logger.warning("Could not build database rows for these paths:")
-            logger.warning('\n'.join([str(p) for p in paths_with_no_row]))
-
-        cur.executemany(
-            "INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :frame_no);",
-            db_data,
+def populate_subject_activation_tsv(
+    output_dir: Path,
+    fladirs: list[Path],
+    reindex: bool = False
+) -> Path:
+    if (subject_activation_tsv_path := (output_dir / "subject_activation.tsv")).is_file():
+        if reindex:
+            logger.info(f"Removing {subject_activation_tsv_path} and reindexing paths.")
+            subject_activation_tsv_path.unlink()
+        else:
+            logger.info(f"{subject_activation_tsv_path} already exists. Use the --reindex option to reindex FLA paths if they have changed.")
+            return subject_activation_tsv_path
+    files_of_interest = []
+    for fladir in fladirs:
+        files_of_interest.extend(
+            fladir.glob("sub-*/ses-*/func/sub*condition*stat-effect_boldmap*")  # Include 'sub' at beginning of filename to avoid '._'-prefixed files
         )
-        cur.execute("""
-        CREATE TABLE subjects
-        AS SELECT DISTINCT subject
-        FROM subject_activation
-        ORDER BY subject
-        """)
-        indepvar_dfs = [
-            pd.read_csv(
-                p, sep="," if p.suffix == ".csv" else "\t", dtype={"subject": str}
+
+    rows = [build_subject_activation_row_from_path(p) for p in files_of_interest]
+
+    paths_with_no_row = []  # Print out paths that were not included
+    for i in range(len(rows)):
+        if rows[i] is None:
+            paths_with_no_row.append(files_of_interest[i])
+    if len(paths_with_no_row) > 0:
+        logger.warning("Could not build rows for these paths:")
+        logger.warning('\n'.join([str(p) for p in paths_with_no_row]))
+    del paths_with_no_row
+
+    rows = list(filter(None, rows))
+    df = pd.DataFrame(rows)
+    df.to_csv(subject_activation_tsv_path, sep="\t", index=False)
+    return subject_activation_tsv_path
+
+
+def populate_indepvar_tsv(
+    output_dir: Path,
+    var_paths: list[Path],
+    categorical_columns: list[str] = [],
+    standardization: str = "zscore",
+    reindex: bool = False
+) -> Path:
+    standardization = standardization.lower()
+    if standardization not in ("zscore", "meancenter", "none"):
+        raise ValueError(f"Standardization method must be one of 'zscore', 'meancenter', or 'none'. Received {standardization}")
+
+    if (indepvar_tsv_path := (output_dir / "indepvar.tsv")).is_file():
+        if reindex:
+            logger.info(f"Removing {indepvar_tsv_path} and reindexing paths.")
+            indepvar_tsv_path.unlink()
+        else:
+            logger.info(f"{indepvar_tsv_path} already exists. Use the --reindex option to reindex FLA paths if they have changed.")
+            return indepvar_tsv_path
+        
+    dfs = []
+    for var_path in var_paths:
+        if var_path.suffix not in (".csv", ".tsv"):
+            raise ValueError(f"Subject variable files should either be a valid .csv or .tsv file. Received path: {var_path}")
+        dfs.append(pd.read_csv(
+            var_path,
+            sep="," if var_path.suffix == ".csv" else "\t"
+        ))
+        df = dfs[-1]
+        subj_col = df.columns[0] #always assume first column is subject column
+        df.rename(columns={subj_col: "subject"}, inplace=True)
+        df["subject"] = df["subject"].astype(str)
+        if not len(df["subject"]) == len(df):
+            raise ValueError(
+                f"Variable file {var_path} has multiple rows for these subjects: \n"
+                f"{df["subject"].value_counts.loc(lambda x : x > 1)}"
             )
-            for p in var_paths
-        ]
-        all_column_types = {"subject": "TEXT UNIQUE NOT NULL"}
-        for idx in range(len(indepvar_dfs)):
-            if "subject" not in indepvar_dfs[idx].columns:
-                raise ValueError(
-                    f"Missing required column 'subject' from {var_paths[idx].resolve()!s}"
-                )
-            indepvar_dfs[idx] = indepvar_dfs[idx].dropna(subset=["subject"])
-            indepvar_dfs[idx]["subject"].str.replace("sub-", "")
-            for col in indepvar_dfs[idx].columns:
-                if col == "subject":
+        for col in df.columns[1:]:
+            if df[col].dtype == "str" or col in categorical_columns:  # for N categories, break into N-1 columns
+                unique_groups = df[col].unique()
+                for i in range(len(unique_groups)-1):
+                    df[f"{col}[{i}]"] = df[col] == unique_groups[i]
+            else:  # continuous variable case
+                if standardization == "zscore":
+                    df[col] = (df[col] - df[col].mean()) / df[col].std()
+                elif standardization == "meancenter":
+                    df[col] = (df[col] - df[col].mean())
+                elif standardization == "none":
                     continue
-                elif indepvar_dfs[idx][col].dtype in (np.float64, np.int64, np.float32, np.int32):
-                    indepvar_dfs[idx][f"{col}_ZSCORE"] = (indepvar_dfs[idx][col] - indepvar_dfs[idx][col].mean()) / indepvar_dfs[idx][col].std()
-                    all_column_types[col] = "NUM"
-                    all_column_types[f"{col}_ZSCORE"] = "REAL"
-                else:
-                    all_column_types[col] = "TEXT"
-            indepvar_dfs[idx] = (
-                indepvar_dfs[idx]
-                .sort_values(by="subject")
-                .reset_index(drop=True)
-            )
-        indepvar_df = pd.concat(indepvar_dfs, axis=0, join='outer')
-        indepvar_df.to_sql(
-            name="indepvar",
-            con=con,
-            if_exists="append",
-            index=False,
-        )
-        con.commit()
-
-    logger.debug("DB created successfully!")
-    if config.just_build_db:
-        logger.info("--just-build-db was set, exiting now")
-        sys.exit()
-    return db_path
-
-
-def get_unique_conditions_as_list(db_path: str | Path) -> list[str]:
-    with sqlite3.connect(db_path) as con:
-        cur = con.cursor()
-        unique_conditions = [
-            row[0]
-            for row in cur.execute(
-                "SELECT DISTINCT condition FROM subject_activation"
-            ).fetchall()
-        ]
-        return unique_conditions
+        
+    df_ = pd.concat(dfs, ignore_index=True)
+    df_.to_csv(indepvar_tsv_path, sep="\t", index=False)
+    return indepvar_tsv_path
 
 
 def get_activation_and_design_matrix(
