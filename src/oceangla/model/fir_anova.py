@@ -48,7 +48,7 @@ def run_anova_model(
 ):
     match model_desc["model_type"]:
         case "fir_twoway_rm_anova":
-            activation_img, num_frames = __get_twoway_anova_activation_img(model_desc, subject_activation_df)
+            activation_img, num_frames = __get_anova_activation_img(model_desc, subject_activation_df)
             design_df = __get_twoway_anova_design_df(model_desc, subject_variables_df, num_frames)
             TwoWayAnovaModel(
                 activation_img,
@@ -66,7 +66,7 @@ def __get_oneway_anova_activation_img(
 ):
     pass
 
-def __get_twoway_anova_activation_img(
+def __get_anova_activation_img(
     model_desc: ModelDesc,
     subject_activation_df: pd.DataFrame,
 ):
