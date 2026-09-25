@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import progressbar
 import matplotlib.pyplot as plt
-from joblib import Parallel, delayed
+from joblib import Parallel, Memory, delayed
 
 # import ipdb
 from nilearn.image import resample_img
@@ -48,15 +48,13 @@ def run_anova_model(
 ):
     match model_desc["model_type"]:
         case "fir_twoway_rm_anova":
-            activation_img = __get_twoway_anova_activation_img(model_desc, subject_activation_df)
-            condition = model_desc["function_args"][0]
-            num_frames = len(subject_activation_df.query("condition == @variable and frame_no != -1")["frame_no"].unique())
+            activation_img, num_frames = __get_twoway_anova_activation_img(model_desc, subject_activation_df)
             design_df = __get_twoway_anova_design_df(model_desc, subject_variables_df, num_frames)
-            breakpoint()
             TwoWayAnovaModel(
                 activation_img,
                 design_df,
                 model_desc,
+                num_frames,
                 alpha=config.alphas
             ).fit()
         case "fir_rm_anova":
@@ -70,7 +68,7 @@ def __get_oneway_anova_activation_img(
 
 def __get_twoway_anova_activation_img(
     model_desc: ModelDesc,
-    subject_activation_df: pd.DataFrame
+    subject_activation_df: pd.DataFrame,
 ):
     condition = model_desc["function_args"][0]
     space, task, session = (
@@ -82,45 +80,54 @@ def __get_twoway_anova_activation_img(
         subject_activation_df
         .query(
             "condition == @condition and "
-            "frame_no != -1 and "
+            "frame_no == -1 and "
             "task == @task and "
             "space == @space and "
-            "session == @session "
+            "session == @session"
         )
-        .sort_values(by=["subject", "frame_no"])
-    )["path"]
+        .sort_values(by=["subject"])
+    )["path"].to_list()
     logger.debug("Loading activation...")
-    imgs = Parallel(n_jobs=10, verbose=10)(delayed(lambda p : nib.load(p))(p) for p in paths)
-    # imgs = []
-    # for i, p in enumerate(paths):
-    #     imgs.append(nib.load(p))
-    #     logger.debug(f"Loaded img {p} ({i+1} out of {len(paths)})")
+    # imgs = Parallel(n_jobs=10, verbose=10)(delayed(lambda p : nib.load(p))(p) for p in paths)
+    img0 = nib.load(paths[0])
+    if isinstance(img0, nib.Cifti2Image) and img0.dataobj.shape[0] == 1:
+        raise ValueError("Image should contain multiple frames for an FIR two-way ANOVA.")
+    elif isinstance(img0, nib.Nifti1Image) and img0.dataobj.shape[3] == 1:
+        raise ValueError("Image should contain multiple frames for an FIR two-way ANOVA.")
+    fdatas = [nib.load(p).get_fdata() for p in paths]
+    # fdatas = Parallel(n_jobs=10, verbose=10)(delayed(lambda img : img.get_fdata())(img) for img in imgs)
     logger.debug("Done!")
-    fdatas = [img.get_fdata() for img in imgs]
-    if isinstance(imgs[0], nib.Cifti2Image):
+    if isinstance(img0, nib.Cifti2Image):
+        logger.info("Concatenating...")
+        frame_count = img0.dataobj.shape[0]
+        sub_count = len(subject_activation_df["subject"].unique())
+        total_frames = frame_count * sub_count
         fdata_stacked = np.concatenate(fdatas, axis=0)
-        return nib.Cifti2Image(
-            fdata_stacked,
-            header=(
-                ScalarAxis(
-                    name=[
-                        f"{sub}_frame{frame}"
-                        for sub, frame in product(
-                            sorted(subject_activation_df["subject"].unique()),
-                            range(len(subject_activation_df["frame_no"].unique()))
-                        )
-                    ]
+        logger.info("Making stacked image...")
+        print(fdata_stacked.shape)
+        return (
+            nib.Cifti2Image(
+                fdata_stacked,
+                header=(
+                    ScalarAxis(
+                        name=["frame"] * total_frames
+                    ),
+                    img0.header.get_axis(1)
                 ),
-                imgs[0].header.get_axis(1)
+                nifti_header=img0.nifti_header
             ),
-            nifti_header=imgs[0].nifti_header
+            frame_count
         )
-    elif isinstance(imgs[0], nib.Cifti2Image):
+    elif isinstance(img0, nib.Cifti2Image):
         fdata_stacked = np.concatenate(fdatas, axis=3)
-        return nib.Nifti1Image(
-            fdata_stacked,
-            affine=imgs[0].affine,
-            header=imgs[0].header
+        frame_count = img0.dataobj.shape[3]
+        return (
+            nib.Nifti1Image(
+                fdata_stacked,
+                affine=img0.affine,
+                header=img0.header
+            ),
+            frame_count
         )
     else:
         raise ValueError(f"Unexpected image type {type(imgs[0])} (this shouldn't happen)")
@@ -142,7 +149,7 @@ def __get_twoway_anova_design_df(
     design_df.insert(0, "intercept", design_df.pop("intercept"))
     design_arr = design_df.to_numpy()
     design_arr = np.repeat(design_arr, num_frames, axis=0)
-    frame_arr = np.concatenate([np.eye(num_frames)] * (len(design_df)-1), axis=0)
+    frame_arr = np.concatenate([np.eye(num_frames)] * (len(design_df)), axis=0)
     design_arr = np.concatenate((design_arr, frame_arr), axis=1)
     frame_column_names = [f"frame_{i}" for i in range(num_frames)]
     design_df = pd.DataFrame(
@@ -161,12 +168,14 @@ class TwoWayAnovaModel:
         activation_img: nib.Cifti2Image | nib.Nifti1Image,
         design_df: pd.DataFrame,
         model_desc: ModelDesc,
+        num_frames: int,
         alpha: float | list[float] = 0.05,
         **kwargs,
     ):
         self.activation_img = activation_img
         self.fdata = activation_img.get_fdata()
         self.design_df = design_df
+        self.num_frames = num_frames
         self.value_names = list(design_df.columns)
         self.model_desc = model_desc
         self.model_outdir = config.outdir_path / sanitize_filename(self.model_desc["model_name"])
@@ -249,7 +258,7 @@ class TwoWayAnovaModel:
         )
         rss_full = np.sum((Y - design_matrix_arr @ beta)**2, axis=0)
         rss_reduced = np.sum((Y - design_matrix_arr_no_int @ beta_no_int)**2, axis=0)
-        df_num = len([col for col in self.design_df.columns if "interaction" in col])
+        df_num = self.num_frames - 1
         df_denom = len(self.design_df) - design_matrix_arr.shape[1]
         fstat = ((rss_reduced - rss_full) / df_num) / (rss_full / df_denom)
         pval = stats.f.sf(fstat, df_num, df_denom)
