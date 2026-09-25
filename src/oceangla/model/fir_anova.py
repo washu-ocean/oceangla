@@ -60,11 +60,6 @@ def run_anova_model(
         case "fir_rm_anova":
             raise NotImplementedError("One-way ANOVA not yet implemented.")
 
-def __get_oneway_anova_activation_img(
-    model_desc: ModelDesc,
-    subject_activation_df: pd.DataFrame,
-):
-    pass
 
 def __get_anova_activation_img(
     model_desc: ModelDesc,
@@ -130,7 +125,7 @@ def __get_anova_activation_img(
             frame_count
         )
     else:
-        raise ValueError(f"Unexpected image type {type(imgs[0])} (this shouldn't happen)")
+        raise ValueError(f"Unexpected image type {type(img0)} (this shouldn't happen)")
 
 
 def __get_twoway_anova_design_df(
