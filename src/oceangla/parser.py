@@ -204,6 +204,33 @@ def _get_parser():
         help='Strategy for determining which voxels are considered neighbors. Choices are "NN1" (neighbors touch faces, maximum of 6), "NN2" (neighbors touch faces or edges, maximum of 18), or "NN3" (neighbors touch faces, edges, or corners, maximum 26). Default is "NN1".'
     )
     parser.add_argument(
+        "--space", "--template-space", "--template_space",
+        dest="space_ids",
+        nargs="+",
+        default=[],
+        help="One or more template space(s) to run group-level models on. These are "
+        "included in the filename between 'space-' and an underscore '_'. By "
+        "default, will run a separate model for each unique functional space."
+    )
+    parser.add_argument(
+        "--task", "--task-id", "--task_id",
+        dest="task_ids",
+        nargs="+",
+        default=[],
+        help="One or more task identifier(s) to run group-level models on. These are "
+        "included in the filename between 'task-' and an underscore '_'. Default "
+        "behavior is to run a separate model for each unique task."
+    )
+    parser.add_argument(
+        "--session", "--session-id", "--session_id", "--session_name", "--session-name",
+        dest="session_ids",
+        nargs="+",
+        default=[],
+        help="One or more session identifier(s) to run group-level models on. These are "
+        "included in the filename between 'ses-' and an underscore '_'. Default "
+        "behavior is to run a separate model for each unique session identifier."
+    )
+    parser.add_argument(
         "--join_null_across_parameters",
         "--join-null-across-parameters",
         dest="separate_null_by_parameter",
@@ -254,19 +281,6 @@ def _get_parser():
         "have its own null distribution that will never integrate sizes found in surface space, but this can be "
         "subdivided into multiple null distributions depending on whether a 'within_conditions' option is chosen. "
         "Default is 'across_conditions_across_structures.'"
-    )
-    parser.add_argument(
-        "--session-name",
-        "--session_name",
-        "--sessionname",
-        nargs="+",
-        dest="session_name",
-        help="""\
-                        One or more BIDS session names to use, in case there are multiple. If multiple
-                        are specified, separate models will be ran for each depvar/indepvar pair for each session subset.
-                        Here's an example where each BIDS session name is 'ses-01': ``--session-name 01``. Here's another
-                        with different pre- and post- sessions: ``--session-name pre post``. By default, will run
-                        for each unique session name.""",
     )
     parser.add_argument(
         "--standardization-method", "--standardization_method",

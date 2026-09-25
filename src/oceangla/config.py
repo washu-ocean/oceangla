@@ -19,10 +19,12 @@ class config:  # All attributes are set in parser.py parse_args()
     preprocdir_paths: list[Path] | None = None
     separate_null_by_hemisphere: bool = True
     separate_null_by_parameter: bool = True
-    session_name: list[str] | None = None
+    session_ids: list[str] = []
+    space_ids: list[str] = []
     standardization_method: str = "zscore"
     subject_activation_path: Path | None = None
     subject_variables_path: Path | None = None
+    task_ids: list[str] = []
     var_paths: list[Path] | None = None
     vertex_area_map_paths: tuple[Path, Path] | None = None
     version: str | None = None

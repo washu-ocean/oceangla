@@ -6,6 +6,10 @@ import json
 import math
 
 import nibabel as nib
+from nibabel.cifti2.cifti2_axes import (
+    ScalarAxis,
+    BrainModelAxis
+)
 import numpy as np
 import pandas as pd
 import progressbar
@@ -34,6 +38,7 @@ from .volume_utils import (
     get_biggest_voxel_cluster_sizes,
     get_voxel_clusters,
 )
+from .model import ModelDesc
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +60,149 @@ def save_null_histogram(
     plt.clf()
 
 
+def run_ols_model(
+    model_desc: ModelDesc,
+    subject_activation_df: pd.DataFrame,
+    subject_variables_df: pd.DataFrame
+):
+    activation_img = get_activation_img(model_desc, subject_activation_df)
+    design_df = get_design_df(model_desc, subject_variables_df)
+    OLSModel(
+        activation_img,
+        design_df,
+        model_desc,
+        perms=config.perms,
+        alpha=config.alphas,
+        volume_cluster_strategy=config.volume_cluster_strategy,
+        dlabel_paths=config.dlabel_paths,
+        separate_null_by_hemisphere=config.separate_null_by_hemisphere,
+        separate_null_by_parameter=config.separate_null_by_parameter,
+    ).fit()
+
+def get_activation_img(
+    model_desc: ModelDesc,
+    subject_activation_df: pd.DataFrame,
+):
+    scalars, conditions = (
+        [1 if c[0] == "+" else -1 for c in model_desc["depvars"]],
+        [c[1:] for c in model_desc["depvars"]]
+    )
+    if len(scalars) > 1:  # Make sure we're scaling these in the right order after sorting the dataframe by subject/condition
+        sorted_pairs = sorted(zip(scalars, conditions), key=lambda tup : tup[1])
+        scalars, conditions = (
+            [t[0] for t in sorted_pairs],
+            [t[1] for t in sorted_pairs]
+        )
+    space, task, session = (
+        model_desc["space"],
+        model_desc["task"],
+        model_desc["session"],
+    )
+    if len(conditions) > 1:  # compute a contrast for each subject, then concatenate
+        paths = (
+            subject_activation_df
+            .query(
+                "condition in @conditions and "
+                "frame_no == -1 and "
+                "task == @task and "
+                "space == @space and "
+                "session == @session "
+            )
+            .sort_values(by=["subject", "condition"])
+        )["path"]
+        imgs = [nib.load(p) for p in paths]
+        if isinstance(imgs[0], nib.Cifti2Image):
+            fdatas = [img.get_fdata() for img in imgs]
+            fdata_stacked_list = []
+            for i in range(len(conditions)):
+                fdata_stacked_list.append(np.concatenate(fdatas[i::len(conditions)], axis=0, dtype=np.float32))
+                fdata_stacked_list[-1] *= scalars[i]
+            fdata_stacked = np.sum(fdata_stacked_list, axis=1, dtype=np.float32)
+            return nib.Cifti2Image(
+                fdata_stacked,
+                header=(
+                    ScalarAxis(name=sorted(subject_activation_df["subject"].unique())),
+                    imgs[0].header.get_axis(1)
+                ),
+                nifti_header=imgs[0].nifti_header
+            )
+        elif isinstance(imgs[0], nib.Nifti1Image):
+            fdatas = [img.get_fdata() for img in imgs]
+            fdata_stacked_list = []
+            for i in range(len(conditions)):
+                fdata_stacked_list.append(np.concatenate(fdatas[i::len(conditions)], axis=3, dtype=np.float32))
+                fdata_stacked_list[-1] *= scalars[i]
+            fdata_stacked = np.sum(fdata_stacked_list, axis=(0, 1, 2), dtype=np.float32)
+            return nib.Nifti1Image(
+                fdata_stacked,
+                affine=imgs[0].affine,
+                header=imgs[0].header
+            )
+        else:
+            raise ValueError(f"Unexpected image type {type(imgs[0])} (this shouldn't happen)")
+    else:
+        paths = (
+            subject_activation_df
+            .query(
+                "condition == @conditions[0] and "
+                "frame_no == -1 and "
+                "task == @task and "
+                "space == @space and "
+                "session == @session "
+            )
+            .sort_values(by="subject")
+        )["path"]
+        imgs = [nib.load(p) for p in paths] 
+        if isinstance(imgs[0], nib.Cifti2Image):
+            fdatas = [img.get_fdata() for img in imgs]
+            fdata_stacked = np.concatenate(fdatas, axis=0)
+            fdata_stacked *= scalars[0]
+            return nib.Cifti2Image(
+                fdata_stacked,
+                header=(
+                    ScalarAxis(name=sorted(subject_activation_df["subject"].unique())),
+                    imgs[0].header.get_axis(1)
+                ),
+                nifti_header=imgs[0].nifti_header
+            )
+        elif isinstance(imgs[0], nib.Nifti1Image):
+            fdatas = [img.get_fdata() for img in imgs]
+            fdata_stacked = np.concatenate(fdatas, axis=3)
+            return nib.Nifti1Image(
+                fdata_stacked,
+                affine=imgs[0].affine,
+                header=imgs[0].header
+            )
+        else:
+            raise ValueError(f"Unexpected image type {type(imgs[0])} (this shouldn't happen)")
+
+
+def get_design_df(
+    model_desc: ModelDesc,
+    subject_variables_df: pd.DataFrame,
+) -> pd.DataFrame:
+    scalars, subject_variables = (
+        [1 if c[0] == "+" else -1 for c in model_desc["indepvars"]],
+        [c[1:] for c in model_desc["indepvars"]]
+    )
+    design_df = (
+        subject_variables_df[["subject", *subject_variables]]
+        .sort_values(by="subject")
+        .drop(columns=["subject"])
+        .reset_index(drop=True)
+    )
+    design_df["intercept"] = 1
+    design_df.insert(0, "intercept", design_df.pop("intercept"))
+    return design_df
+
+
+    
 class OLSModel:
     def __init__(
         self,
-        activation: dict,
-        design_matrix: pd.DataFrame,
-        model_desc: str = "nondescript-model",
+        activation_img: nib.Cifti2Image | nib.Nifti1Image,
+        design_df: pd.DataFrame,
+        model_desc: ModelDesc,
         perms: int = 0,
         alpha: float | list[float] = 0.05,
         l_area_path: Path | None = None,
@@ -71,16 +213,12 @@ class OLSModel:
         separate_null_by_parameter: bool = False,
         **kwargs,
     ):
-        self.design_matrix = design_matrix
-        self.image_type = activation.get("type", "NA")
-        self.value_names = tuple(design_matrix.reset_index(drop=True).columns)
-        self.space = activation["space"]
-        self.activation = activation["activation"]
-        self.header = activation["header"]
-        self.nifti_header = activation.get("nifti_header", None)
-        self.affine = activation.get("affine", None)
+        self.activation_img = activation_img
+        self.fdata = activation_img.get_fdata()
+        self.design_df = design_df
+        self.value_names = list(design_df.columns)
         self.model_desc = model_desc
-        self.model_outdir = config.outdir_path / sanitize_filename(self.model_desc)
+        self.model_outdir = config.outdir_path / sanitize_filename(self.model_desc["model_name"])
         if not self.model_outdir.is_dir():
             self.model_outdir.mkdir(parents=True, exist_ok=True)
         self.perms = perms
@@ -107,20 +245,20 @@ class OLSModel:
         # volume-specific variables
         self.volume_mask = None
         self.__biggest_vol_cluster_sizes = defaultdict(list)
-        if self.image_type == "NIFTI":
+        if isinstance(self.activation_img, nib.Nifti1Image):
             self.out_suffix = ".nii.gz"
-            self.voxel_sizes = self.header.get_zooms()[:3]
+            self.voxel_sizes = self.activation_img.header.get_zooms()[:3]
             # first check if any template resolution matches
 
             # TODO: handle cohorts
             # TODO: write test for making sure cohort-specific spaces
             # work
-            for k, v in tflow.get_metadata(self.space)["res"].items():
-                if np.allclose(self.header.get_zooms()[:3], v["zooms"]):
+            for k, v in tflow.get_metadata(self.model_desc["space"])["res"].items():
+                if np.allclose(self.activation_img.header.get_zooms()[:3], v["zooms"]):
                     self.volume_mask = nib.load(
                         tflow.get(
-                            self.space,
-                            resolution=self.header.get_zooms()[0],
+                            self.model_desc["space"],
+                            resolution=self.activation_img.header.get_zooms()[0],
                             desc="brain",
                             suffix="mask",
                         )
@@ -131,24 +269,24 @@ class OLSModel:
                 self.volume_mask = resample_img(
                     nib.load(
                         tflow.get(
-                            self.space,
-                            resolution=np.floor(self.header.get_zooms()[0]),
+                            self.model_desc["space"],
+                            resolution=np.floor(self.activation_img.header.get_zooms()[0]),
                             desc="brain",
                             suffix="mask",
                         )
                     ),
                     target_affine=self.affine,
-                    target_shape=self.activation.shape[:3],
+                    target_shape=self.fdata.shape[:3],
                     interpolation="nearest",
                 )
 
         # surface-specific variables
         self.__biggest_l_surf_cluster_sizes = defaultdict(list)
         self.__biggest_r_surf_cluster_sizes = defaultdict(list)
-        if self.image_type == "CIFTI" and hasattr(self.header.get_axis(1), 'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
+        if isinstance(self.activation_img, nib.Cifti2Image) and hasattr(self.activation_img.header.get_axis(1), 'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
             self.out_suffix = ".dscalar.nii"
             l_surf_img, r_surf_img = get_template_midthicknesses_from_cifti_header(
-                self.header, self.space
+                self.activation_img.header, self.model_desc["space"]
             )
             self.l_faces, self.r_faces = (
                 l_surf_img.darrays[1].data,
@@ -166,7 +304,7 @@ class OLSModel:
             self.r_area = (
                 None if r_area_path is None else nib.load(r_area_path).darrays[0].data
             )
-        elif self.image_type == "CIFTI" and isinstance(self.header.get_axis(1), nib.cifti2.cifti2_axes.ParcelsAxis):
+        elif isinstance(self.activation_img, nib.Cifti2Image) and isinstance(self.activation_img.header.get_axis(1), nib.cifti2.cifti2_axes.ParcelsAxis):
             self.out_suffix = ".pscalar.nii"
 
     def fit(self):
@@ -185,21 +323,21 @@ class OLSModel:
         design_matrix = (
             permuted_design_matrix
             if permuted_design_matrix is not None
-            else self.design_matrix
+            else self.design_df
         )
         design_matrix_arr = design_matrix.to_numpy()
-        if self.image_type == "CIFTI":
-            img_shape = (design_matrix_arr.shape[1], self.activation.shape[1])
-            glm_input_shape = self.activation.shape
-        elif self.image_type == "NIFTI":
-            img_shape = (*self.activation.shape[:3], design_matrix_arr.shape[1])
-            glm_input_shape = (self.activation.shape[3], math.prod(self.activation.shape[:3]))
+        if isinstance(self.activation_img, nib.Cifti2Image):
+            img_shape = (design_matrix_arr.shape[1], self.fdata.shape[1])
+            glm_input_shape = self.fdata.shape
+        elif isinstance(self.activation_img, nib.Nifti1Image):
+            img_shape = (*self.fdata.shape[:3], design_matrix_arr.shape[1])
+            glm_input_shape = (self.fdata.shape[3], math.prod(self.fdata.shape[:3]))
         else:
-            raise ValueError(f"Cannot fit GLM for image type: {self.image_type}")
+            raise ValueError(f"Cannot fit GLM for image type: {type(self.activation_img)}")
         n, p = design_matrix_arr.shape
         beta, ssr, rank, s = np.linalg.lstsq(
             design_matrix_arr,
-            self.activation.reshape(glm_input_shape),
+            self.fdata.reshape(glm_input_shape),
             rcond=None,
         )
         sigma_sq = ssr / (n - p)
@@ -226,15 +364,15 @@ class OLSModel:
             self.ses = ses
 
     def __add_cluster_sizes(self, pvals: np.ndarray):
-        if self.image_type == "CIFTI":
+        if isinstance(self.activation_img, nib.Cifti2Image):
             self.__add_cifti_surf_cluster_sizes(pvals)
             self.__add_cifti_vol_cluster_sizes(pvals)
-        elif self.image_type == "NIFTI":
+        elif isinstance(self.activation_img, nib.Nifti1Image):
             self.__add_nifti_cluster_sizes(pvals)
 
     def __add_cifti_surf_cluster_sizes(self, pvals: np.ndarray):
         l_pvals, r_pvals = extract_hemi_values(
-            pvals, self.header, self.l_numverts, self.r_numverts
+            pvals, self.activation_img.header, self.l_numverts, self.r_numverts
         )
         for alpha in self.alphas:
             self.__biggest_l_surf_cluster_sizes[alpha].extend(
@@ -249,7 +387,7 @@ class OLSModel:
             )
 
     def __add_cifti_vol_cluster_sizes(self, pvals: np.ndarray):
-        pval_volume = get_volume_array_from_cifti_array(pvals, self.header)
+        pval_volume = get_volume_array_from_cifti_array(pvals, self.activation_img.header)
         for alpha in self.alphas:
             threshold_mask = (pval_volume < alpha)
             self.__biggest_vol_cluster_sizes[alpha].extend([
@@ -266,12 +404,12 @@ class OLSModel:
             ])
 
     def _fdr_correct(self):
-        if self.image_type == "CIFTI":
+        if isinstance(self.activation_img, nib.Cifti2Image):
             self._fdr_correct_cifti()
             if hasattr(self, 'dlabel_paths') and self.dlabel_paths is not None:
                 for dlabel_path in self.dlabel_paths:
                     self._fdr_correct_cifti(dlabel_path=dlabel_path)
-        elif self.image_type == "NIFTI":
+        elif isinstance(self.activation_img, nib.Nifti1Image):
             self._fdr_correct_nifti()
 
     def _fdr_correct_cifti(self, dlabel_path=None):
@@ -281,7 +419,7 @@ class OLSModel:
         if dlabel_path is not None:
             logger.info(f"Running within-dlabel FDR correction with areas defined by {dlabel_path}")
             dlabel_img = nib.load(dlabel_path)
-            common_structs = cifti_compatible_structures((self.header, dlabel_img.header))
+            common_structs = cifti_compatible_structures((self.activation_img.header, dlabel_img.header))
             if len(common_structs) == 0:
                 raise ValueError(f"No compatible CIFTI structures between image and {dlabel_path}")
             dlabel_fdata = dlabel_img.get_fdata()
@@ -306,13 +444,13 @@ class OLSModel:
                             )
                         ]
                     ),
-                    self.header.get_axis(1),
+                    self.activation_img.header.get_axis(1),
                 ),
             )
             nib.save(
                 fdr_corr_pvals_cifti,
                 p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc)}_fdr_corr_{self.dlabel_path_to_id[dlabel_path]}{self.out_suffix}",
+                / f"{sanitize_filename(self.model_desc['model_name'])}_fdr_corr_{self.dlabel_path_to_id[dlabel_path]}{self.out_suffix}",
             )
             logger.info(f"Saved {p!s}")
         else:
@@ -336,13 +474,13 @@ class OLSModel:
                             )
                         ]
                     ),
-                    self.header.get_axis(1),
+                    self.activation_img.header.get_axis(1),
                 ),
             )
             nib.save(
                 fdr_corr_pvals_cifti,
                 p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc)}_fdr_corr{self.out_suffix}",
+                / f"{sanitize_filename(self.model_desc['model_name'])}_fdr_corr{self.out_suffix}",
             )
             logger.info(f"Saved {p!s}")
 
@@ -352,19 +490,19 @@ class OLSModel:
                 orig_shape = self.uncorr_pvals[..., value_idx].shape
                 flattened_pvals = self.uncorr_pvals[..., value_idx].flatten()
                 fdr_corr = fdr_correct(flattened_pvals, alpha=alpha).reshape(orig_shape)
-                fdr_corr_img = nib.Nifti1Image(fdr_corr, self.affine, header=self.header)
-                nib.save(fdr_corr_img, p := self.model_outdir / f"{sanitize_filename(self.model_desc)}_beta-{value_name}_fdr_corr_{alpha:.4f}.nii.gz")
+                fdr_corr_img = nib.Nifti1Image(fdr_corr, self.affine, header=self.activation_img.header)
+                nib.save(fdr_corr_img, p := self.model_outdir / f"{sanitize_filename(self.model_desc['model_name'])}_beta-{value_name}_fdr_corr_{alpha:.4f}.nii.gz")
                 logger.info(f"Saved {p!s}")
 
     def _cluster_correct(self):
-        if self.image_type == "CIFTI":
+        if isinstance(self.activation_img, nib.Cifti2Image):
             self._cluster_correct_cifti()
-        elif self.image_type == "NIFTI":
+        elif isinstance(self.activation_img, nib.Nifti1Image):
             self._cluster_correct_nifti()
 
     def _cluster_correct_cifti(self):
         l_pvals, r_pvals = extract_hemi_values(
-            self.uncorr_pvals, self.header, self.l_numverts, self.r_numverts
+            self.uncorr_pvals, self.activation_img.header, self.l_numverts, self.r_numverts
         )
         l_clus_corr = np.ones(
             (len(self.value_names) * len(self.alphas), self.l_numverts),
@@ -378,9 +516,9 @@ class OLSModel:
             (len(self.value_names) * len(self.alphas), self.uncorr_pvals.shape[1]),
             np.nan,
         )
-        volume = get_volume_array_from_cifti_array(self.uncorr_pvals, self.header)
-        volume_voxel_indices = self.header.get_axis(1).voxel[(self.header.get_axis(1).voxel != -1).all(axis=1)]
-        volume_cifti_indices = np.argwhere((self.header.get_axis(1).voxel != -1).all(axis=1)).flatten()
+        volume = get_volume_array_from_cifti_array(self.uncorr_pvals, self.activation_img.header)
+        volume_voxel_indices = self.activation_img.header.get_axis(1).voxel[(self.activation_img.header.get_axis(1).voxel != -1).all(axis=1)]
+        volume_cifti_indices = np.argwhere((self.activation_img.header.get_axis(1).voxel != -1).all(axis=1)).flatten()
         for alpha_idx, alpha in enumerate(self.alphas):
             for value_idx, value_name in enumerate(self.value_names):
                 l_mask = np.isfinite(l_pvals[value_idx, :]) & (
@@ -462,7 +600,7 @@ class OLSModel:
                     clus_corr_volume[tuple(cluster.T)] = clus_p
                 full_clus_corr[value_idx * alpha_idx + value_idx, tuple(volume_cifti_indices.T)] = clus_corr_volume[tuple(volume_voxel_indices.T)].T
 
-        for name, slc, bmodel in self.header.get_axis(1).iter_structures():
+        for name, slc, bmodel in self.activation_img.header.get_axis(1).iter_structures():
             if name == "CIFTI_STRUCTURE_CORTEX_LEFT":
                 vidx = bmodel.vertex.astype(np.int64)
                 full_clus_corr[:, slc] = l_clus_corr[:, vidx]
@@ -480,13 +618,13 @@ class OLSModel:
                         )
                     ]
                 ),
-                self.header.get_axis(1),
+                self.activation_img.header.get_axis(1),
             ),
         )
         nib.save(
             clus_corr_pvals_cifti,
             p := self.model_outdir
-            / f"{sanitize_filename(self.model_desc)}_clus_corr{self.out_suffix}",
+            / f"{sanitize_filename(self.model_desc['model_name'])}_clus_corr{self.out_suffix}",
         )
         logger.info(f"Saved {p!s}")
 
@@ -509,16 +647,16 @@ class OLSModel:
                     sizes_larger_than_this_cluster = np.sum(cluster_null_dist >= cluster_size)
                     clus_p = sizes_larger_than_this_cluster / (len(cluster_null_dist) + 1)
                     clus_corr[tuple(cluster.T)] = clus_p
-                clus_corr_img = nib.Nifti1Image(clus_corr, self.affine, header=self.header)
-                nib.save(clus_corr_img, p := self.model_outdir / f"{sanitize_filename(self.model_desc)}_beta-{value_name}_clus_corr_{alpha:.4f}.nii.gz")
+                clus_corr_img = nib.Nifti1Image(clus_corr, self.affine, header=self.activation_img.header)
+                nib.save(clus_corr_img, p := self.model_outdir / f"{sanitize_filename(self.model_desc['model_name'])}_beta-{value_name}_clus_corr_{alpha:.4f}.nii.gz")
                 logger.info(f"Saved {p!s}")
 
     def _save(self):
-        if self.image_type == "NIFTI":
+        if isinstance(self.activation_img, nib.Nifti1Image):
             self._save_nifti()
-        elif self.image_type == "CIFTI":
+        elif isinstance(self.activation_img, nib.Cifti2Image):
             self._save_cifti()
-        self.design_matrix.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t")
+        self.design_df.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t")
 
     def _save_cifti(self):
         for datatype, data in (
@@ -533,13 +671,13 @@ class OLSModel:
                 data,
                 (
                     nib.cifti2.cifti2_axes.ScalarAxis(self.value_names),
-                    self.header.get_axis(1),
+                    self.activation_img.header.get_axis(1),
                 ),
             )
             nib.save(
                 img,
                 p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc)}_{datatype}{self.out_suffix}",
+                / f"{sanitize_filename(self.model_desc['model_name'])}_{datatype}{self.out_suffix}",
             )
             logger.info(f"Saved {p!s}")
             del img
@@ -556,20 +694,20 @@ class OLSModel:
             for idx, value_name in enumerate(
                 self.value_names
             ):  # Have to save a different image per-beta bcuz NIFTI doesn't have volume labelling :-(
-                img = nib.Nifti1Image(data[..., idx], self.affine, header=self.header)
+                img = nib.Nifti1Image(data[..., idx], self.affine, header=self.activation_img.header)
                 nib.save(
                     img,
                     p := self.model_outdir
-                    / f"{sanitize_filename(self.model_desc)}_beta-{value_name}_{datatype}.nii.gz",
+                    / f"{sanitize_filename(self.model_desc['model_name'])}_beta-{value_name}_{datatype}.nii.gz",
                 )
                 logger.info(f"Saved {p!s}")
                 del img
 
     def __get_permuted_design_matrix(self) -> pd.DataFrame:
         """
-        Return DataFrame, which is a copy of self.design_matrix with every column shuffled.
+        Return DataFrame, which is a copy of self.design_df with every column shuffled.
         """
-        permuted_design_matrix = self.design_matrix.copy()
+        permuted_design_matrix = self.design_df.copy()
         for column in permuted_design_matrix.columns:
             if column != "intercept":
                 permuted_design_matrix[column] = (

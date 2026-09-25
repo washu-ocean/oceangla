@@ -1,64 +1,46 @@
-from abc import ABC, abstractmethod
-from pathlib import Path
+from typing import TypedDict, Required
+import logging
 
 import pandas as pd
 
+logger = logging.getLogger(__name__)
 
-class GroupLevelModelResults(ABC):
-    @abstractmethod
-    def __init__(self, *args, **kwargs):
-        pass
+ModelDesc = TypedDict(
+    "ModelDesc",
+    {
+        "model_type": Required[str],
+        "model_name": str,
+        "depvars": list[str],
+        "indepvars": list[str],
+        "function_args": list[str],
+        "session": str,
+        "space": str,
+        "task": str,
+    },
+    total=False
+)
 
-    @abstractmethod
-    def __str__(self):
-        pass
+def run_models(
+    model_descs: list[ModelDesc],
+    subject_activation_df: pd.DataFrame,
+    subject_variables_df: pd.DataFrame
+):
+    for model_desc in model_descs:
+        _run_model(model_desc, subject_activation_df, subject_variables_df)
 
 
-class GroupLevelModel(ABC):
-    @abstractmethod
-    def __init__(
-        self,
-        design_matrix: pd.DataFrame,
-        activation: dict,
-        model_desc: str,
-        perms: int = 0,
-        alpha: float = 0.05,
-        l_surf_path: Path = None,
-        r_surf_path: Path = None,
-        l_area_path: Path = None,
-        r_area_path: Path = None,
-        **kwargs,
-    ):
-        self.design_matrix = design_matrix
-        self.activation = activation
-        self.model_desc = model_desc
-        self.perms = perms
-        self.alpha = alpha
-        self.l_surf_path = l_surf_path
-        self.r_surf_path = r_surf_path
-        self.l_area_path = l_area_path
-        self.r_area_path = r_area_path
-
-    @classmethod
-    def cluster_correct(cls, pvalues):
-        pass
-
-    @abstractmethod
-    def get_activation(self):
-        pass
-
-    @abstractmethod
-    def permute_design_matrix(self):
-        pass
-
-    @abstractmethod
-    def fit(self) -> GroupLevelModelResults:
-        pass
-
-    @abstractmethod
-    def _fit_permutation(self) -> GroupLevelModelResults:
-        pass
-
-    @abstractmethod
-    def _get_clusters_from_pvalue_map(self):
-        pass
+def _run_model(
+    model_desc: ModelDesc,
+    subject_activation_df: pd.DataFrame,
+    subject_variables_df: pd.DataFrame
+):
+    match model_desc["model_type"]:
+        case "OLS":
+            from .ols import run_ols_model
+            run_ols_model(model_desc, subject_activation_df, subject_variables_df)
+        case "onesampttest":
+            logger.info("One-sample t-test not yet implemented.")
+        case "fir_rm_anova":
+            pass
+        case _:
+            raise ValueError(f"Unknown function or model type {model_desc['model_type']}.")
