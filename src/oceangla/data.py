@@ -58,6 +58,7 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
     config.subject_activation_path = populate_subject_activation_tsv(
         config.outdir_path,
         config.fladir_paths,
+        reindex=config.reindex
     )
     subject_activation_df = pd.read_csv(
         config.subject_activation_path,
@@ -199,7 +200,7 @@ def populate_indepvar_tsv(
             logger.info(f"Removing {indepvar_tsv_path} and reindexing paths.")
             indepvar_tsv_path.unlink()
         else:
-            logger.info(f"{indepvar_tsv_path} already exists. Use the --reindex option to reindex FLA paths if they have changed.")
+            logger.info(f"{indepvar_tsv_path} already exists. Use the --reindex option to reindex subject-specific variables if they have changed.")
             return indepvar_tsv_path
         
     dfs = []

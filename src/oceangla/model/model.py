@@ -42,5 +42,13 @@ def _run_model(
             logger.info("One-sample t-test not yet implemented.")
         case "fir_rm_anova":
             pass
+        case "fir_twoway_rm_anova":
+            if (num_args := len(model_desc["function_args"])) != 2:
+                raise ValueError(
+                    "Function fir_twoway_rm_anova() takes 2 arguments: "
+                    f"'beta' and 'variable'. Received {num_args}: {', '.join(model_desc['function_args'])}"
+                )
+            from .fir_anova import run_anova_model
+            run_anova_model(model_desc, subject_activation_df, subject_variables_df)
         case _:
             raise ValueError(f"Unknown function or model type {model_desc['model_type']}.")

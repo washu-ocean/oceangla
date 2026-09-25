@@ -6,13 +6,9 @@ import json
 import math
 
 import nibabel as nib
-from nibabel.cifti2.cifti2_axes import (
-    ScalarAxis,
-    BrainModelAxis
-)
+from nibabel.cifti2.cifti2_axes import ScalarAxis
 import numpy as np
 import pandas as pd
-import progressbar
 import matplotlib.pyplot as plt
 
 # import ipdb
@@ -65,8 +61,8 @@ def run_ols_model(
     subject_activation_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
-    activation_img = get_activation_img(model_desc, subject_activation_df)
-    design_df = get_design_df(model_desc, subject_variables_df)
+    activation_img = __get_activation_img(model_desc, subject_activation_df)
+    design_df = __get_design_df(model_desc, subject_variables_df)
     OLSModel(
         activation_img,
         design_df,
@@ -79,7 +75,7 @@ def run_ols_model(
         separate_null_by_parameter=config.separate_null_by_parameter,
     ).fit()
 
-def get_activation_img(
+def __get_activation_img(
     model_desc: ModelDesc,
     subject_activation_df: pd.DataFrame,
 ):
@@ -152,9 +148,9 @@ def get_activation_img(
             )
             .sort_values(by="subject")
         )["path"]
-        imgs = [nib.load(p) for p in paths] 
+        imgs = [nib.load(p) for p in paths]
+        fdatas = [img.get_fdata() for img in imgs]
         if isinstance(imgs[0], nib.Cifti2Image):
-            fdatas = [img.get_fdata() for img in imgs]
             fdata_stacked = np.concatenate(fdatas, axis=0)
             fdata_stacked *= scalars[0]
             return nib.Cifti2Image(
@@ -166,7 +162,6 @@ def get_activation_img(
                 nifti_header=imgs[0].nifti_header
             )
         elif isinstance(imgs[0], nib.Nifti1Image):
-            fdatas = [img.get_fdata() for img in imgs]
             fdata_stacked = np.concatenate(fdatas, axis=3)
             return nib.Nifti1Image(
                 fdata_stacked,
@@ -177,7 +172,7 @@ def get_activation_img(
             raise ValueError(f"Unexpected image type {type(imgs[0])} (this shouldn't happen)")
 
 
-def get_design_df(
+def __get_design_df(
     model_desc: ModelDesc,
     subject_variables_df: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -247,7 +242,7 @@ class OLSModel:
         self.__biggest_vol_cluster_sizes = defaultdict(list)
         if isinstance(self.activation_img, nib.Nifti1Image):
             self.out_suffix = ".nii.gz"
-            self.voxel_sizes = self.activation_img.header.get_zooms()[:3]
+            voxel_sizes = self.activation_img.header.get_zooms()[:3]
             # first check if any template resolution matches
 
             # TODO: handle cohorts
