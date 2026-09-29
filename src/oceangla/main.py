@@ -7,9 +7,7 @@ from .data import collect_models_and_dataframes
 from .model import run_models
 from .parser import parse_args
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger()
-
 handler = logging.StreamHandler(sys.stdout)
 handler.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
