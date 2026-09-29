@@ -19,7 +19,6 @@ from templateflow import api as tflow
 
 # from .model import GroupLevelModel
 from ..config import config
-from ..image_utils.slice import get_spatial_slices
 from ..image_utils.cifti import cifti_compatible_structures
 from .correction import fdr_correct
 from .surface_utils import (
@@ -61,7 +60,8 @@ def run_ols_model(
     subject_activation_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
-    activation_img = __get_activation_img(model_desc, subject_activation_df)
+    get_img_cached = config.joblib_memory.cache(__get_activation_img)
+    activation_img = get_img_cached(model_desc, subject_activation_df)
     design_df = __get_design_df(model_desc, subject_variables_df)
     OLSModel(
         activation_img,
@@ -183,11 +183,11 @@ def __get_design_df(
     design_df = (
         subject_variables_df[["subject", *subject_variables]]
         .sort_values(by="subject")
-        .drop(columns=["subject"])
         .reset_index(drop=True)
     )
     design_df["intercept"] = 1
     design_df.insert(0, "intercept", design_df.pop("intercept"))
+    design_df.drop(columns=["subject"])
     return design_df
 
 
@@ -651,7 +651,7 @@ class OLSModel:
             self._save_nifti()
         elif isinstance(self.activation_img, nib.Cifti2Image):
             self._save_cifti()
-        self.design_df.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t")
+        self.design_df.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t", index=False)
 
     def _save_cifti(self):
         for datatype, data in (
