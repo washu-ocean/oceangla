@@ -85,10 +85,7 @@ def __get_activation_img(
     )
     if len(scalars) > 1:  # Make sure we're scaling these in the right order after sorting the dataframe by subject/condition
         sorted_pairs = sorted(zip(scalars, conditions), key=lambda tup : tup[1])
-        scalars, conditions = (
-            [t[0] for t in sorted_pairs],
-            [t[1] for t in sorted_pairs]
-        )
+        scalars, conditions = map(list, zip(*sorted_pairs))
     space, task, session = (
         model_desc["space"],
         model_desc["task"],

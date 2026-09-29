@@ -41,7 +41,15 @@ def _run_model(
             from .ols import run_ols_model
             run_ols_model(model_desc, subject_activation_df, subject_variables_df)
         case "onesampttest":
-            logger.info("One-sample t-test not yet implemented.")
+            from .ols import run_ols_model
+            if (num_args := len(model_desc["function_args"])) != 1:
+                raise ValueError(
+                    "Function fir_twoway_rm_anova() takes 2 arguments: "
+                    f"'beta' and 'variable'. Received {num_args}: {', '.join(model_desc['function_args'])}"
+                )
+            model_desc["depvars"] = ["+" + model_desc["function_args"][0]] # will find a better way of adding scalars to this soon
+            model_desc["indepvars"] = []
+            run_ols_model(model_desc, subject_activation_df, subject_variables_df)
         case "fir_rm_anova":
             pass
         case "fir_twoway_rm_anova":
