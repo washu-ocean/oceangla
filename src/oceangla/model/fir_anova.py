@@ -4,6 +4,8 @@ from collections import defaultdict, OrderedDict
 from pathlib import Path
 import json
 import math
+import re
+import random
 
 import nibabel as nib
 from nibabel.cifti2.cifti2_axes import ScalarAxis
@@ -46,15 +48,17 @@ def run_anova_model(
     subject_activation_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
+    get_img_cached = config.joblib_memory.cache(__get_anova_activation_img)
     match model_desc["model_type"]:
         case "fir_twoway_rm_anova":
-            activation_img, num_frames = __get_anova_activation_img(model_desc, subject_activation_df)
-            design_df = __get_twoway_anova_design_df(model_desc, subject_variables_df, num_frames)
+            activation_img, num_frames = get_img_cached(model_desc, subject_activation_df)
+            design_df, var_of_interest = __get_twoway_anova_design_df(model_desc, subject_variables_df, num_frames)
             TwoWayAnovaModel(
                 activation_img,
                 design_df,
                 model_desc,
                 num_frames,
+                var_of_interest,
                 alpha=config.alphas
             ).fit()
         case "fir_rm_anova":
@@ -137,24 +141,25 @@ def __get_twoway_anova_design_df(
     design_df = (
         subject_variables_df[["subject", variable]]
         .sort_values(by="subject")
-        .drop(columns=["subject"])
         .reset_index(drop=True)
     )
     design_df["intercept"] = 1
-    design_df.insert(0, "intercept", design_df.pop("intercept"))
-    design_arr = design_df.to_numpy()
+    design_df.insert(1, "intercept", design_df.pop("intercept"))
+    subj_series = pd.Series(np.repeat(design_df["subject"].to_numpy(), num_frames))
+    design_arr = design_df.drop(columns=["subject"]).to_numpy()
     design_arr = np.repeat(design_arr, num_frames, axis=0)
     frame_arr = np.concatenate([np.eye(num_frames)] * (len(design_df)), axis=0)
     design_arr = np.concatenate((design_arr, frame_arr), axis=1)
     frame_column_names = [f"frame_{i}" for i in range(num_frames)]
     design_df = pd.DataFrame(
         design_arr, 
-        columns=list(design_df.columns) + frame_column_names
+        columns=list(design_df.columns[1:]) + frame_column_names
     )
     for frame_no in frame_column_names:
         interaction_name = f"{variable}_{frame_no}_interaction"
         design_df[interaction_name] = design_df[variable] * design_df[frame_no]
-    return design_df
+    design_df.insert(0, "subject", subj_series)
+    return design_df, variable
 
 
 class TwoWayAnovaModel:
@@ -164,13 +169,16 @@ class TwoWayAnovaModel:
         design_df: pd.DataFrame,
         model_desc: ModelDesc,
         num_frames: int,
+        var_of_interest: str,
         alpha: float | list[float] = 0.05,
         **kwargs,
     ):
         self.activation_img = activation_img
         self.fdata = activation_img.get_fdata()
-        self.design_df = design_df
+        self.design_df_with_sub = design_df
+        self.design_df = self.design_df_with_sub.drop(columns=["subject"])
         self.num_frames = num_frames
+        self.var_of_interest = var_of_interest
         self.value_names = list(design_df.columns)
         self.model_desc = model_desc
         self.model_outdir = config.outdir_path / sanitize_filename(self.model_desc["model_name"])
@@ -257,50 +265,82 @@ class TwoWayAnovaModel:
         df_denom = len(self.design_df) - design_matrix_arr.shape[1]
         fstat = ((rss_reduced - rss_full) / df_num) / (rss_full / df_denom)
         pval = stats.f.sf(fstat, df_num, df_denom)
+        # Greeenhouse-Geisser sphericity correction
+        res = (Y - (design_matrix_arr @ beta)).reshape((-1, self.num_frames, beta.shape[-1]))
+        epsilons = np.zeros(beta.shape[-1], dtype=np.float32)
+        for v in range(res.shape[-1]):
+            res_v = res[:, :, v]
+            S = np.cov(res_v, rowvar=False)
+            mean_diag, grand_mean, row_means = np.mean(np.diag(S)), np.mean(S), np.mean(S, axis=1)
+            df_num_ = (self.num_frames**2) * ((mean_diag - grand_mean)**2)
+            df_denom_ = (self.num_frames - 1) * (np.sum(S**2) - 2 * self.num_frames * np.sum(row_means**2) + (self.num_frames**2) * (grand_mean**2))
+            if df_denom_ == 0:
+                epsilons[v] = 1.0
+            else:
+                epsilons[v] = np.clip(df_num_ / df_denom_, 1.0 / (self.num_frames - 1), 1.0)
+        pval_sphericity_corr = stats.f.sf(fstat, df_num*epsilons, df_denom*epsilons)
         self.fstat = fstat.reshape(img_shape)
         self.uncorr_pval = pval.reshape(img_shape)
+        self.epsilons = epsilons.reshape(img_shape)
+        self.pval_sphericity_corr = pval_sphericity_corr.reshape(img_shape)
 
     def _save(self):
         if isinstance(self.activation_img, nib.Nifti1Image):
-            self._save_nifti()
+            for datatype, data in (
+                ("uncorr_pvals", self.uncorr_pvals),
+                ("fstat", self.fstat),
+                ("epsilons", self.epsilons),
+                ("pval_sphericity_corr", self.pval_sphericity_corr),
+            ):
+                if data is None:
+                    continue
+                img = nib.Nifti1Image(data, self.affine, header=self.activation_img.header)
+                nib.save(
+                    img,
+                    p := self.model_outdir
+                    / f"{sanitize_filename(self.model_desc['model_name'])}_{datatype}.nii.gz",
+                )
+                logger.info(f"Saved {p!s}")
+                del img
         elif isinstance(self.activation_img, nib.Cifti2Image):
-            self._save_cifti()
-        self.design_df.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t")
+            for datatype, data in (
+                ("uncorr_pvals", self.uncorr_pval),
+                ("fstat", self.fstat),
+                ("epsilons", self.epsilons),
+                ("pval_sphericity_corr", self.pval_sphericity_corr),
+            ):
+                if data is None:
+                    continue
+                img = nib.cifti2.cifti2.Cifti2Image(
+                    data,
+                    (
+                        nib.cifti2.cifti2_axes.ScalarAxis(name=[datatype]),
+                        self.activation_img.header.get_axis(1),
+                    ),
+                )
+                nib.save(
+                    img,
+                    p := self.model_outdir
+                    / f"{sanitize_filename(self.model_desc['model_name'])}_{datatype}.dscalar.nii",
+                )
+                logger.info(f"Saved {p!s}")
+                del img
+        self.design_df_with_sub.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t", index=False)
 
-    def _save_cifti(self):
-        for datatype, data in (
-            ("uncorr_pvals", self.uncorr_pval),
-            ("fstat", self.fstat)
-        ):
-            if data is None:
-                continue
-            img = nib.cifti2.cifti2.Cifti2Image(
-                data,
-                (
-                    nib.cifti2.cifti2_axes.ScalarAxis(name=[datatype]),
-                    self.activation_img.header.get_axis(1),
-                ),
-            )
-            nib.save(
-                img,
-                p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc['model_name'])}_{datatype}.dscalar.nii",
-            )
-            logger.info(f"Saved {p!s}")
-            del img
+    def __permute_design_matrix(self) -> pd.DataFrame:
+        # Shuffle between-subject variable by whole-block, within-subject variables freely
+        between_groups = []
+        between_group_columns = (
+            [self.var_of_interest] + 
+            [c for c in self.design_df_with_sub.columns if any([
+                re.match(r'frame_\d\d', c),
+                re.match(rf'{self.var_of_interest}_frame_\d\d', c)
+            ])]
+        )
+        for _, group_df in self.design_df_with_sub.groupby("subject"):
+            between_groups.append(group_df[between_group_columns].sample(frac=1).reset_index(drop=True))
+        random.shuffle(between_groups)
+        df_ = self.design_df_with_sub.copy()
+        df_[between_group_columns] = pd.concat(between_groups, ignore_index=True)
+        return df_
 
-    def _save_nifti(self):
-        for datatype, data in (
-            ("uncorr_pvals", self.uncorr_pvals),
-            ("fstat", self.fstat)
-        ):
-            if data is None:
-                continue
-            img = nib.Nifti1Image(data, self.affine, header=self.activation_img.header)
-            nib.save(
-                img,
-                p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc['model_name'])}_{datatype}.nii.gz",
-            )
-            logger.info(f"Saved {p!s}")
-            del img

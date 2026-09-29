@@ -2,6 +2,7 @@ from typing import TypedDict, Required
 import logging
 
 import pandas as pd
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ ModelDesc = TypedDict(
         "session": str,
         "space": str,
         "task": str,
+        "frame_count": np.uint32
     },
     total=False
 )
