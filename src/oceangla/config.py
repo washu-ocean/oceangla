@@ -5,11 +5,11 @@ from joblib import Memory
 
 class config:  # All attributes are set in parser.py parse_args()
     alphas: list[float] = [0.05]
-    db_path: str | None = None
     depvar: list[str] | None = None
     dlabel_paths: list[Path] | None = None
     fladir_paths: list[Path] | None = None
     indepvar: list[str] | None = None
+    just_build_db: bool = False
     models: list[str] = []
     model_file: Path | None = None
     model_names: list[str] = []
@@ -19,7 +19,12 @@ class config:  # All attributes are set in parser.py parse_args()
     preprocdir_paths: list[Path] | None = None
     separate_null_by_hemisphere: bool = True
     separate_null_by_parameter: bool = True
-    session_name: list[str] | None = None
+    session_ids: list[str] = []
+    space_ids: list[str] = []
+    standardization_method: str = "zscore"
+    subject_activation_path: Path | None = None
+    subject_variables_path: Path | None = None
+    task_ids: list[str] = []
     var_paths: list[Path] | None = None
     vertex_area_map_paths: tuple[Path, Path] | None = None
     version: str | None = None

@@ -1,371 +1,223 @@
 import logging
-import os
-import sys
 import re
-import sqlite3
-import time
-from collections import defaultdict
 from pathlib import Path
+from itertools import product
+from copy import deepcopy
 
-import nibabel as nib
-import numpy as np
 import pandas as pd
-import joblib
 
-from .error import (
-    print_unique_conditions,
-    print_unique_sessions,
-    print_unique_spaces,
-    print_unique_tasks,
-)
-from .formula import FormulaParser, Token, TokenType, is_scaled_value_node
+from .formula import FormulaParser
+from .config import config
+from .model import ModelDesc
+
 
 logger = logging.getLogger(__name__)
 
+ROW_REGEX = re.compile(r'sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\-]+)_condition-([a-zA-Z0-9\-]+)_*stat-effect_boldmap(.*)')
 
-def __db_is_valid(db_path: Path) -> bool:
-    query_table = "SELECT name FROM sqlite_master WHERE type='table' AND name='%s'"
-    with sqlite3.connect(db_path) as con:
-        cur = con.cursor()
-        # Check subject_activation table exists
-        if cur.execute(query_table % "subject_activation").fetchone() is None:
-            logger.warning("Table subject_activation not present in db, reindexing.")
-            return False
-        # Check indepvar table exists
-        if cur.execute(query_table % "indepvar").fetchone() is None:
-            logger.warning("Table indepvar not present in db, reindexing.")
-            return False
-    logger.info(
-        f"Using database at {db_path.resolve()!s} (last modified {time.ctime(os.path.getmtime(str(db_path)))})"
+
+def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.DataFrame]:
+    logger.info("Parsing model(s)...")
+    models = [] # list of ModelDesc including space, task, session ids
+    parsed_models = [] # list of ModelDesc after just parsing formulas
+    for model_name, model_formula in zip(config.model_names, config.models):
+        model_desc = FormulaParser(model_formula).model_desc
+        model_desc["model_name"] = model_name
+        parsed_models.append(model_desc)
+    logger.info(f"{len(parsed_models)} found.")
+    logger.info("Collecting subject variables...")
+    config.subject_variables_path = populate_indepvar_tsv(
+        config.outdir_path,
+        config.var_paths,
+        standardization=config.standardization_method,
+        reindex=config.reindex
     )
-    logger.warning(
-        "Run oceangla with the --reindex option if the contents of your FLA folder or "
-        "variable .csv/.tsv files have changed."
+    subject_variables_df = pd.read_csv(
+        config.subject_variables_path,
+        sep="\t",
+        dtype={
+            "subject": str
+        }
     )
-    return True
-
-
-def populate_db(db_path: Path,
-                fladirs: list[Path],
-                var_paths: list[Path],
-                reindex: bool = False) -> Path:
-    if db_path.is_file():
-        if reindex or not __db_is_valid(db_path):
-            db_path.unlink()
-        else:
-            return db_path
-    logger.debug(
-        f"{'Reindexing' if reindex else 'Creating'} sqlite db file at {db_path}"
+    logger.info("Collecting subject activation...")
+    config.subject_activation_path = populate_subject_activation_tsv(
+        config.outdir_path,
+        config.fladir_paths,
+        reindex=config.reindex
     )
-    with sqlite3.connect(db_path) as con:
-        cur = con.cursor()
-        cur.execute("DROP TABLE IF EXISTS subject_activation")
-        cur.execute("""
-        CREATE TABLE subject_activation(
-            subject TEXT,
-            session TEXT,
-            task TEXT,
-            path TEXT,
-            condition TEXT,
-            suffix TEXT,
-            space TEXT,
-            fladir TEXT
-        );""")
-
-        files_of_interest = []
-
-        for fladir in fladirs:
-            files_of_interest.extend(
-                fladir.glob("sub-*/ses-*/func/sub*condition*stat-effect_boldmap*")  # Include 'sub' at beginning of filename to avoid '._'-prefixed files
-            )
-
-        row_regex = re.compile(r'sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\-]+)_condition-([a-zA-Z0-9\-]+)_*stat-effect_boldmap(.*)')
-
-        paths_with_no_row = []
-
-        def __build_path_row(p: Path) -> dict | None:
-            row = {}
-            row["path"] = str(p)
-            row["fladir"] = str(p.parent.parent.parent.parent.resolve())
-            try:
-                (
-                    row["subject"],
-                    row["session"],
-                    row["task"],
-                    row["space"],
-                    row["condition"],
-                    row["suffix"]
-                ) = re.search(row_regex, p.name).group(1,2,3,4,5,6)
-                logger.debug(f"Built row for {p.resolve()!s}")
-                return row
-            except AttributeError:
-                paths_with_no_row.append(p)
-                logger.error(f"Could not build database row with path: {p}")
-                logger.error("Attempted to use pattern: sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\\-]+)_condition-([a-zA-Z0-9\\-]+)_*stat-effect_boldmap(.*)")
-                return None
-
-        db_data = [__build_path_row(p) for p in files_of_interest if p is not None]
-        if len(paths_with_no_row) > 0:
-            logger.warning("Could not build database rows for these paths:")
-            logger.warning('\n'.join([str(p) for p in paths_with_no_row]))
-
-        cur.executemany(
-            "INSERT INTO subject_activation VALUES(:subject, :session, :task, :path, :condition, :suffix, :space, :fladir);",
-            db_data,
-        )
-        cur.execute("""
-        CREATE TABLE subjects
-        AS SELECT DISTINCT subject
-        FROM subject_activation
-        ORDER BY subject
-        """)
-        indepvar_dfs = [
-            pd.read_csv(
-                p, sep="," if p.suffix == ".csv" else "\t", dtype={"subject": str}
-            )
-            for p in var_paths
-        ]
-        all_column_types = {"subject": "TEXT UNIQUE NOT NULL"}
-        for idx in range(len(indepvar_dfs)):
-            if "subject" not in indepvar_dfs[idx].columns:
-                raise ValueError(
-                    f"Missing required column 'subject' from {var_paths[idx].resolve()!s}"
-                )
-            indepvar_dfs[idx] = indepvar_dfs[idx].dropna(subset=["subject"])
-            indepvar_dfs[idx]["subject"].str.replace("sub-", "")
-            for col in indepvar_dfs[idx].columns:
-                if col == "subject":
-                    continue
-                elif indepvar_dfs[idx][col].dtype in (np.float64, np.int64, np.float32, np.int32):
-                    indepvar_dfs[idx][f"{col}_ZSCORE"] = (indepvar_dfs[idx][col] - indepvar_dfs[idx][col].mean()) / indepvar_dfs[idx][col].std()
-                    all_column_types[col] = "NUM"
-                    all_column_types[f"{col}_ZSCORE"] = "REAL"
-                else:
-                    all_column_types[col] = "TEXT"
-            indepvar_dfs[idx] = (
-                indepvar_dfs[idx]
-                .sort_values(by="subject")
-                .reset_index(drop=True)
-            )
-        indepvar_df = pd.concat(indepvar_dfs, axis=0, join='outer')
-        indepvar_df.to_sql(
-            name="indepvar",
-            con=con,
-            if_exists="append",
-            index=False,
-        )
-        con.commit()
-
-    logger.debug("DB created successfully!")
-    return db_path
-
-
-def get_unique_conditions_as_list(db_path: str | Path) -> list[str]:
-    with sqlite3.connect(db_path) as con:
-        cur = con.cursor()
-        unique_conditions = [
-            row[0]
-            for row in cur.execute(
-                "SELECT DISTINCT condition FROM subject_activation"
-            ).fetchall()
-        ]
-        return unique_conditions
-
-
-def get_activation_and_design_matrix(
-    formula: str,
-    db_path: str,
-    space: str = "fsLR",
-    task: str = None,
-    session: str = None,
-    memory: joblib.Memory | None = None
-) -> tuple[pd.DataFrame, dict]:
-    deptree, indeptree = FormulaParser(formula).tree[0], FormulaParser(formula).tree[1]
-    column_queries = []
-    column_names = []
-
-    def _eval_indep_node(node):
-        if isinstance(node, Token) and node.type == TokenType.INTERCEPT:
-            return
-        elif is_scaled_value_node(node):
-            (sign, scalar), varname = node
-            sign, scalar, varname = sign.value, scalar.value, varname.value
-            column_names.append(varname)
-            column_queries.append(f"{sign}{scalar} * {varname}_ZSCORE AS {varname}")
-        elif (
-            isinstance(node, list) and node[0].type == TokenType.MUL
-        ):  # full interaction
-            for node2 in node[1:]:
-                (sign, scalar), varname = node2
-                sign, scalar, varname = sign.value, scalar.value, varname.value
-                column_names.append(varname)
-                if (
-                    subquery := f"{sign}{scalar} * {varname}_ZSCORE AS {varname}"
-                ) not in column_queries:
-                    column_queries.append(subquery)
-            column_queries.append(
-                " * ".join(
-                    [
-                        f"({sign.value}{scalar.value} * {varname.value}_ZSCORE)"
-                        for (sign, scalar), varname in node[1:]
-                    ]
-                )
-            )
-            column_queries[-1] += " AS interaction_" + "_".join(
-                varname.value for (_, _), varname in node[1:]
-            )
-        elif (
-            isinstance(node, list) and node[0].type == TokenType.INTERACTION
-        ):  # just interaction term
-            column_names.extend([varname.value for (_, _), varname in node[1:]])
-            column_queries.append(
-                " * ".join(
-                    [
-                        f"({sign.value}{scalar.value} * {varname.value}_ZSCORE)"
-                        for (sign, scalar), varname in node[1:]
-                    ]
-                )
-            )
-            column_queries[-1] += " AS interaction_" + "_".join(
-                varname.value for (_, _), varname in node[1:]
-            )
-        else:
-            raise NotImplementedError(
-                "Can only handle scaled nodes in depvar as of now"
-            )
-
-    for node in indeptree:
-        _eval_indep_node(node)
-
-    column_names = list(set(column_names))
-
-    with sqlite3.connect(db_path) as con:
-        query = (
-            "SELECT "
-            + ",".join(column_queries)
-            + " FROM indepvar "
-            + " INNER JOIN subjects ON subjects.subject = indepvar.subject WHERE "
-            + " AND ".join([f" {col} IS NOT NULL " for col in column_names])
-            + "ORDER BY indepvar.subject"
-        )
-        df = pd.read_sql_query(query, con)
-    df["intercept"] = 1
-    cols = ["intercept"] + [
-        c for c in df.columns if c != "intercept"
-    ]  # rearrange so intercept is first
-    df = df[cols]
-    activations = {}
-    final_activation = {}
-
-    if memory is None:
-        _query_depvar = query_depvar
-    else:
-        _query_depvar = memory.cache(query_depvar)
-
-    def _query_activation(condition, scalar=1) -> dict:
-        activation = _query_depvar(
-            condition, db_path, column_names, space, task, session
-        )
-        activation["activation"] *= scalar
-        return activation
-
-    def _eval_depvar_node(node):
-        if is_scaled_value_node(node):
-            (sign, scalar), condition = node
-            sign, scalar, condition = sign.value, scalar.value, condition.value
-            scalar_int = int(f"{sign}{scalar}")
-            activations[condition] = _query_activation(condition, scalar=scalar_int)
-            if not final_activation:
-                for key in activations[condition].keys():
-                    if key != "activation":
-                        final_activation[key] = activations[condition][key]
-            return condition
-        else:
-            raise NotImplementedError(
-                "Can only handle scaled nodes in depvar as of now"
-            )
-
-    for node in deptree:
-        _eval_depvar_node(node)
-
-    final_activation["activation"] = np.squeeze(
-        np.sum(
-            np.concatenate(
-                [
-                    activation["activation"][np.newaxis, ...]
-                    for activation in activations.values()
-                ]
-            ),
-            axis=0,
-        )
+    subject_activation_df = pd.read_csv(
+        config.subject_activation_path,
+        sep="\t",
+        dtype={
+            "subject": str,
+            "session": str,
+            "task": str,
+            "space": str,
+            "condition": str,
+            "frame_no": int
+        }
     )
-    return df, final_activation
-
-
-def query_depvar(
-    condition,
-    db_path: str,
-    column_names: list[str],
-    space: str = "fsLR",
-    task: str = None,
-    session: str = None,
-) -> dict:
-    activation = {"space": space}
-    with sqlite3.connect(db_path) as con:
-        cur = con.cursor()
-        query = f"""
-        SELECT path FROM subject_activation
-        INNER JOIN indepvar ON subject_activation.subject = indepvar.subject
-        WHERE (subject_activation.condition='{condition}' OR subject_activation.condition='{condition.replace("_", "-")}')
-        AND subject_activation.space='{space}'
-        """
-        for col in column_names:
-            query += f"AND indepvar.{col} IS NOT NULL "
-        if task is not None:
-            query += f"AND subject_activation.task='{task}' "
-        if session is not None:
-            query += f"AND subject_activation.session='{session}' "
-        else:  # Try and get the most common session
-            session, _ = cur.execute(
-                """ SELECT session, COUNT(session) as frequency FROM subject_activation GROUP BY session ORDER BY frequency DESC LIMIT 1 """
-            ).fetchone()
-            query += f"AND subject_activation.session='{session}'"
-        query += " ORDER BY subject_activation.subject"
-        logger.debug(f"Running query:\n{query}")
-        paths = [row[0] for row in cur.execute(query)]
-        try:
-            first_img = nib.load(paths[0])
-        except IndexError:
-            print("Query failed.")
-            print_unique_conditions(cur)
-            print_unique_sessions(cur)
-            print_unique_tasks(cur)
-            print_unique_spaces(cur)
-            exit()
-        print("Loading activation...")
-        if len(first_img.dataobj.shape) == 2:  # CIFTI
-            activation["type"] = "CIFTI"
-            activation["header"] = first_img.header
-            activation["nifti_header"] = first_img.nifti_header
-            activation["activation"] = np.concatenate(
-                [nib.load(path).get_fdata() for path in paths], axis=0
-            )
-        elif len(first_img.dataobj.shape) == 3:  # NIFTI
-            activation["type"] = "NIFTI"
-            activation["affine"] = first_img.affine
-            activation["header"] = first_img.header
-            activation["activation"] = np.concatenate(
-                [nib.load(path).get_fdata()[..., np.newaxis] for path in paths], axis=3
-            )
-        elif len(first_img.dataobj.shape) == 4:  # NIFTI
-            activation["type"] = "NIFTI"
-            activation["affine"] = first_img.affine
-            activation["header"] = first_img.header
-            activation["activation"] = np.concatenate(
-                [nib.load(path).get_fdata() for path in paths], axis=3
-            )
+    # Only include overlapping subjects in both dataframes
+    subject_activation_df = subject_activation_df[subject_activation_df["subject"].isin(subject_variables_df["subject"])]
+    subject_variables_df = subject_variables_df[subject_variables_df["subject"].isin(subject_activation_df["subject"])]
+    unique_spaces = subject_activation_df["space"].unique()
+    if len(config.space_ids) > 0:
+        if (
+            len((unique_spaces_ := 
+                list(set(unique_spaces).intersection(config.space_ids))
+            )) == 0
+        ):
+            raise ValueError(f"spaces {' '.join(config.space_ids)} not present in this dataset.")
         else:
+            unique_spaces = unique_spaces_
+    unique_tasks = subject_activation_df["task"].unique()
+    if len(config.task_ids) > 0:
+        if (
+            len((unique_tasks_ := 
+                list(set(unique_tasks).intersection(config.task_ids))
+            )) == 0
+        ):
+            raise ValueError(f"tasks {' '.join(config.task_ids)} not present in this dataset.")
+        else:
+            unique_tasks = unique_tasks_
+    unique_sessions = subject_activation_df["session"].unique()
+    if len(config.session_ids) > 0:
+        if (
+            len((unique_sessions_ := 
+                list(set(unique_sessions).intersection(config.session_ids))
+            )) == 0
+        ):
+            raise ValueError(f"sessions {' '.join(config.session_ids)} not present in this dataset.")
+        else:
+            unique_sessions = unique_sessions_
+    unique_combos = list(product(unique_spaces, unique_tasks, unique_sessions))
+    for desc, combo in product(parsed_models, unique_combos):
+        models.append(deepcopy(desc))
+        (
+            models[-1]["space"],
+            models[-1]["task"],
+            models[-1]["session"]
+        ) = combo
+    logger.info(f"Will run each model {len(unique_combos)} times for each (template space - task - session) combo:")
+    for combo in unique_combos:
+        logger.info(f"\t({' - '.join(combo)})")
+    logger.info(f"Will run {len(models)} total group-level models.")
+    del parsed_models, unique_combos, unique_spaces, unique_tasks, unique_sessions
+    return (models, subject_activation_df, subject_variables_df)
+
+   
+
+
+def build_subject_activation_row_from_path(p: Path) -> dict | None:
+    row = {}
+    row["path"] = str(p)
+    try:
+        (
+            row["subject"],
+            row["session"],
+            row["task"],
+            row["space"],
+            row["condition"],
+            row["suffix"]
+        ) = re.search(ROW_REGEX, p.name).group(1,2,3,4,5,6)
+        if len(row["condition"].split("-")) > 1 and (frame_no_match := re.match(r'\d\d', row["condition"].split("-")[-1])):
+            row["frame_no"] = int(frame_no_match.group())
+            row["condition"] = row["condition"].removesuffix(f"-{frame_no_match.group()}")
+        else:
+            row["frame_no"] = -1  # not a frame in an FIR response
+        logger.debug(f"Built row for {p.resolve()!s}")
+        return row
+    except AttributeError:
+        logger.error(f"Could not build database row with path: {p}")
+        logger.error("Attempted to use pattern: sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\\-]+)_condition-([a-zA-Z0-9\\-]+)_*stat-effect_boldmap(.*)")
+        logger.error("Error found", exc_info=True)
+        return None
+
+
+def populate_subject_activation_tsv(
+    output_dir: Path,
+    fladirs: list[Path],
+    reindex: bool = False
+) -> Path:
+    if (subject_activation_tsv_path := (output_dir / "subject_activation.tsv")).is_file():
+        if reindex:
+            logger.info(f"Removing {subject_activation_tsv_path} and reindexing paths.")
+            subject_activation_tsv_path.unlink()
+        else:
+            logger.info(f"{subject_activation_tsv_path} already exists. Use the --reindex option to reindex FLA paths if they have changed.")
+            return subject_activation_tsv_path
+    files_of_interest = []
+    for fladir in fladirs:
+        files_of_interest.extend(
+            fladir.glob("sub-*/ses-*/func/sub*condition*stat-effect_boldmap*")  # Include 'sub' at beginning of filename to avoid '._'-prefixed files
+        )
+
+    rows = [build_subject_activation_row_from_path(p) for p in files_of_interest]
+
+    paths_with_no_row = []  # Print out paths that were not included
+    for i in range(len(rows)):
+        if rows[i] is None:
+            paths_with_no_row.append(files_of_interest[i])
+    if len(paths_with_no_row) > 0:
+        logger.warning("Could not build rows for these paths:")
+        logger.warning('\n'.join([str(p) for p in paths_with_no_row]))
+    del paths_with_no_row
+
+    rows = list(filter(None, rows))
+    df = pd.DataFrame(rows)
+    df.to_csv(subject_activation_tsv_path, sep="\t", index=False)
+    return subject_activation_tsv_path
+
+
+def populate_indepvar_tsv(
+    output_dir: Path,
+    var_paths: list[Path],
+    categorical_columns: list[str] = [],
+    standardization: str = "zscore",
+    reindex: bool = False
+) -> Path:
+    standardization = standardization.lower()
+    if standardization not in ("zscore", "meancenter", "none"):
+        raise ValueError(f"Standardization method must be one of 'zscore', 'meancenter', or 'none'. Received {standardization}")
+
+    if (indepvar_tsv_path := (output_dir / "indepvar.tsv")).is_file():
+        if reindex:
+            logger.info(f"Removing {indepvar_tsv_path} and reindexing paths.")
+            indepvar_tsv_path.unlink()
+        else:
+            logger.info(f"{indepvar_tsv_path} already exists. Use the --reindex option to reindex subject-specific variables if they have changed.")
+            return indepvar_tsv_path
+        
+    dfs = []
+    for var_path in var_paths:
+        if var_path.suffix not in (".csv", ".tsv"):
+            raise ValueError(f"Subject variable files should either be a valid .csv or .tsv file. Received path: {var_path}")
+        dfs.append(pd.read_csv(
+            var_path,
+            sep="," if var_path.suffix == ".csv" else "\t"
+        ))
+        df = dfs[-1]
+        subj_col = df.columns[0] #always assume first column is subject column
+        df.rename(columns={subj_col: "subject"}, inplace=True)
+        df["subject"] = df["subject"].astype(str)
+        if not len(df["subject"]) == len(df):
             raise ValueError(
-                f"Number of axes for image at path {paths[0]} must be 2 (for CIFTI) 3, or 4 (for NIFTI), but contains {len(first_img.dataobj.shape)}"
+                f"Variable file {var_path} has multiple rows for these subjects: \n"
+                f"{df['subject'].value_counts.loc(lambda x : x > 1)}"
             )
-        return activation
+        for col in df.columns[1:]:
+            if df[col].dtype == "str" or col in categorical_columns:  # for N categories, break into N-1 columns
+                unique_groups = df[col].unique()
+                for i in range(len(unique_groups)-1):
+                    df[f"{col}[{i}]"] = df[col] == unique_groups[i]
+            else:  # continuous variable case
+                if standardization == "zscore":
+                    df[col] = (df[col] - df[col].mean()) / df[col].std()
+                elif standardization == "meancenter":
+                    df[col] = (df[col] - df[col].mean())
+                elif standardization == "none":
+                    continue
+        
+    df_ = pd.concat(dfs, ignore_index=True)
+    df_.to_csv(indepvar_tsv_path, sep="\t", index=False)
+    return indepvar_tsv_path

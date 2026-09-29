@@ -1,3 +1,1 @@
-from .ols import OLSModel
-
-__all__ = ["OLSModel"]
+from .model import ModelDesc, run_models
