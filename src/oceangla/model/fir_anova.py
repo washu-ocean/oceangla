@@ -138,6 +138,7 @@ def __get_twoway_anova_design_df(
     num_frames: int
 ) -> pd.DataFrame:
     variable = model_desc["function_args"][1]
+    categorical = isinstance(subject_variables_df[variable].dtype, pd.StringDtype)
     design_df = (
         subject_variables_df[["subject", variable]]
         .sort_values(by="subject")
@@ -146,18 +147,29 @@ def __get_twoway_anova_design_df(
     design_df["intercept"] = 1
     design_df.insert(1, "intercept", design_df.pop("intercept"))
     subj_series = pd.Series(np.repeat(design_df["subject"].to_numpy(), num_frames))
+    if categorical:  # one-hot-encode categorical variable, dropping first
+        design_df = pd.get_dummies(subject_variables_df, columns=[variable], drop_first=True, dtype=int)
     design_arr = design_df.drop(columns=["subject"]).to_numpy()
     design_arr = np.repeat(design_arr, num_frames, axis=0)
-    frame_arr = np.concatenate([np.eye(num_frames)] * (len(design_df)), axis=0)
+    frame_arr_ = (
+        pd.get_dummies(pd.Series(list(range(num_frames))), drop_first=True, dtype=int)
+    )
+    frame_arr = np.vstack([frame_arr_] * len(design_df))
     design_arr = np.concatenate((design_arr, frame_arr), axis=1)
-    frame_column_names = [f"frame_{i}" for i in range(num_frames)]
+    frame_column_names = [f"frame_{i}" for i in range(1, num_frames)]
     design_df = pd.DataFrame(
         design_arr, 
         columns=list(design_df.columns[1:]) + frame_column_names
     )
-    for frame_no in frame_column_names:
-        interaction_name = f"{variable}_{frame_no}_interaction"
-        design_df[interaction_name] = design_df[variable] * design_df[frame_no]
+    if categorical:
+        cat_columns = [c for c in design_df.columns if c.startswith(variable)]
+        for cat_column, frame_no in product(cat_columns, frame_column_names):
+            interaction_name = f"{cat_column}_{frame_no}_interaction"
+            design_df[interaction_name] = design_df[cat_column] * design_df[frame_no]
+    else:
+        for frame_no in frame_column_names:
+            interaction_name = f"{variable}_{frame_no}_interaction"
+            design_df[interaction_name] = design_df[variable] * design_df[frame_no]
     design_df.insert(0, "subject", subj_series)
     return design_df, variable
 
@@ -230,14 +242,16 @@ class TwoWayAnovaModel:
         elif isinstance(self.activation_img, nib.Cifti2Image) and hasattr(self.activation_img.header.get_axis(1), 'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
             self.out_suffix = ".dscalar.nii"
 
+        self.design_df_with_sub.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t", index=False)
+
     def fit(self):
         print(f"Running {self.model_desc}")
         self._fit()
         self._save()
 
-    def _fit(self, permuted_design_matrix=None):
-        design_matrix = self.design_df
-        design_matrix_no_int = self.design_df[[col for col in self.design_df if "interaction" not in col]]
+    def _fit(self):
+        design_matrix = self.design_df.reset_index(drop=True)
+        design_matrix_no_int = design_matrix[[col for col in self.design_df if "interaction" not in col]]
         design_matrix_arr = design_matrix.to_numpy()
         design_matrix_arr_no_int = design_matrix_no_int.to_numpy()
         if isinstance(self.activation_img, nib.Cifti2Image):
@@ -325,7 +339,7 @@ class TwoWayAnovaModel:
                 )
                 logger.info(f"Saved {p!s}")
                 del img
-        self.design_df_with_sub.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t", index=False)
+        
 
     def __permute_design_matrix(self) -> pd.DataFrame:
         # Shuffle between-subject variable by whole-block, within-subject variables freely
