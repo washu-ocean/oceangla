@@ -8,6 +8,7 @@ class config:  # All attributes are set in parser.py parse_args()
     depvar: list[str] | None = None
     dlabel_paths: list[Path] | None = None
     fladir_paths: list[Path] | None = None
+    fwhm: int = 0
     indepvar: list[str] | None = None
     just_build_db: bool = False
     models: list[str] = []

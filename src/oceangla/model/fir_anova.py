@@ -1,19 +1,17 @@
 from itertools import product
 import logging
-from collections import defaultdict, OrderedDict
-from pathlib import Path
-import json
 import math
 import re
 import random
+import subprocess
+import shlex
 
 import nibabel as nib
 from nibabel.cifti2.cifti2_axes import ScalarAxis
 import numpy as np
 import pandas as pd
-import progressbar
 import matplotlib.pyplot as plt
-from joblib import Parallel, Memory, delayed
+
 
 # import ipdb
 from nilearn.image import resample_img
@@ -32,6 +30,7 @@ from .surface_utils import (
     get_biggest_surface_clusters,
     get_cluster_index_groups,
     get_template_midthicknesses_from_cifti_header,
+    get_template_midthickness_paths_from_cifti_header
 )
 from .volume_utils import (
     get_volume_array_from_cifti_array,
@@ -51,8 +50,9 @@ def run_anova_model(
     get_img_cached = config.joblib_memory.cache(__get_anova_activation_img)
     match model_desc["model_type"]:
         case "fir_twoway_rm_anova":
-            activation_img, num_frames = get_img_cached(model_desc, subject_activation_df)
+            num_frames = __get_num_frames(model_desc, subject_activation_df)
             design_df, var_of_interest = __get_twoway_anova_design_df(model_desc, subject_variables_df, num_frames)
+            activation_img = get_img_cached(model_desc, subject_activation_df, subject_variables_df, var_of_interest, num_frames)
             TwoWayAnovaModel(
                 activation_img,
                 design_df,
@@ -65,9 +65,9 @@ def run_anova_model(
             raise NotImplementedError("One-way ANOVA not yet implemented.")
 
 
-def __get_anova_activation_img(
+def __get_num_frames(
     model_desc: ModelDesc,
-    subject_activation_df: pd.DataFrame,
+    subject_activation_df: pd.DataFrame
 ):
     condition = model_desc["function_args"][0]
     space, task, session = (
@@ -77,6 +77,43 @@ def __get_anova_activation_img(
     )
     paths = (
         subject_activation_df
+        .query(
+            "condition == @condition and "
+            "frame_no == -1 and "
+            "task == @task and "
+            "space == @space and "
+            "session == @session"
+        )
+        .sort_values(by=["subject"])
+    )["path"].to_list()
+    img0 = nib.load(paths[0])
+    if isinstance(img0, nib.Cifti2Image):
+        num_frames = img0.dataobj.shape[0]
+    elif isinstance(img0, nib.Nifti1Image):
+        num_frames = img0.dataobj.shape[3]
+    else:
+        raise TypeError(f"Unexpected image type {img0}")
+    del img0, paths
+    return num_frames
+
+
+def __get_anova_activation_img(
+    model_desc: ModelDesc,
+    subject_activation_df: pd.DataFrame,
+    subject_variables_df: pd.DataFrame,
+    var_of_interest: str,
+    num_frames: int
+):
+    condition = model_desc["function_args"][0]
+    space, task, session = (
+        model_desc["space"],
+        model_desc["task"],
+        model_desc["session"],
+    )
+    null_subjects = subject_variables_df.loc[subject_variables_df[var_of_interest].isna(), "subject"]
+    subject_activation_df_ = subject_activation_df[~subject_activation_df["subject"].isin(null_subjects)]
+    paths = (
+        subject_activation_df_
         .query(
             "condition == @condition and "
             "frame_no == -1 and "
@@ -98,9 +135,8 @@ def __get_anova_activation_img(
     logger.debug("Done!")
     if isinstance(img0, nib.Cifti2Image):
         logger.info("Concatenating...")
-        frame_count = img0.dataobj.shape[0]
-        sub_count = len(subject_activation_df["subject"].unique())
-        total_frames = frame_count * sub_count
+        sub_count = len(subject_activation_df_["subject"].unique())
+        total_frames = num_frames * sub_count
         fdata_stacked = np.concatenate(fdatas, axis=0)
         logger.info("Making stacked image...")
         print(fdata_stacked.shape)
@@ -114,22 +150,19 @@ def __get_anova_activation_img(
                     img0.header.get_axis(1)
                 ),
                 nifti_header=img0.nifti_header
-            ),
-            frame_count
+            )
         )
     elif isinstance(img0, nib.Cifti2Image):
         fdata_stacked = np.concatenate(fdatas, axis=3)
-        frame_count = img0.dataobj.shape[3]
         return (
             nib.Nifti1Image(
                 fdata_stacked,
                 affine=img0.affine,
                 header=img0.header
-            ),
-            frame_count
+            )
         )
     else:
-        raise ValueError(f"Unexpected image type {type(img0)} (this shouldn't happen)")
+        raise TypeError(f"Unexpected image type {type(img0)} (this shouldn't happen)")
 
 
 def __get_twoway_anova_design_df(
@@ -138,12 +171,17 @@ def __get_twoway_anova_design_df(
     num_frames: int
 ) -> pd.DataFrame:
     variable = model_desc["function_args"][1]
-    categorical = isinstance(subject_variables_df[variable].dtype, pd.StringDtype)
+    if len(variable) > 3 and variable[:2] == "C(" and variable[-1] == ")":
+        categorical = True
+        variable = variable[2:-1]
+    else:
+        categorical = isinstance(subject_variables_df[variable].dtype, pd.StringDtype)
     design_df = (
         subject_variables_df[["subject", variable]]
         .sort_values(by="subject")
         .reset_index(drop=True)
     )
+    design_df = design_df[~design_df[variable].isna()]
     design_df["intercept"] = 1
     design_df.insert(1, "intercept", design_df.pop("intercept"))
     subj_series = pd.Series(np.repeat(design_df["subject"].to_numpy(), num_frames))
@@ -241,7 +279,20 @@ class TwoWayAnovaModel:
 
         elif isinstance(self.activation_img, nib.Cifti2Image) and hasattr(self.activation_img.header.get_axis(1), 'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
             self.out_suffix = ".dscalar.nii"
-
+            activation_img_path = self.model_outdir / "stacked_activation.dtseries.nii"
+            nib.save(self.activation_img, activation_img_path)
+            if config.fwhm > 0:
+                l_surf_path, r_surf_path = get_template_midthickness_paths_from_cifti_header(
+                    self.activation_img.header, self.model_desc["space"]
+                )
+                smoothed_activation_img_path = self.model_outdir / "smoothed_stacked_activation.dtseries.nii"
+                subprocess.run(shlex.split(
+                    "wb_command -cifti-smoothing "
+                    f"{str(activation_img_path.resolve())} {config.fwhm} {config.fwhm} COLUMN {str(smoothed_activation_img_path.resolve())} -fwhm "
+                    f"-left-surface {l_surf_path} -right-surface {r_surf_path}"
+                ))
+                self.activation_img = nib.load(smoothed_activation_img_path)
+                self.fdata = self.activation_img.get_fdata()
         self.design_df_with_sub.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t", index=False)
 
     def fit(self):

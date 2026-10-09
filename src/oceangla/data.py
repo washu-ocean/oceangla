@@ -103,6 +103,7 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
         logger.info(f"\t({' - '.join(combo)})")
     logger.info(f"Will run {len(models)} total group-level models.")
     del parsed_models, unique_combos, unique_spaces, unique_tasks, unique_sessions
+    print(models)
     return (models, subject_activation_df, subject_variables_df)
 
    
