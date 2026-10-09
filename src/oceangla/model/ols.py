@@ -183,50 +183,8 @@ def __get_design_df(
     )
     design_df.drop(columns=["subject"], inplace=True)
     return design_df
-    # for vargroup in interactions:
-    #     interaction_column_group = []
-    #     for var in vargroup.split(":"):
-    #         scalar, varname = 1 if var[0] == "+" else -1, var[1:]
-    #         if isinstance(subject_variables_df[varname].dtype, pd.StringDtype):
-    #             df_ = pd.get_dummies(
-    #                 subject_variables_df[varname],
-    #                 drop_first=True,
-    #                 dtype=int
-    #             )
-    #             num_cols = len(df_.columns)
-    #             df_.columns = [f"{varname}_{i+1}" for i in range(num_cols)]
-    #             df_ *= scalar
-    #             interaction_column_group.append(df_)
-    #         else:
-    #             interaction_column_group.append(subject_variables_df[varname] * scalar)
-    #     continuous_columns = list(filter(lambda c : isinstance(c, pd.Series), interaction_column_group))
-    #     categorical_dfs = list(filter(lambda c : isinstance(c, pd.DataFrame), interaction_column_group))
-    #     interaction_name = "_".join([c.name for c in continuous_columns])
-    #     continuous_interaction = math.prod(continuous_columns)
-    #     for df_ in categorical_dfs:
-    #         cat_name = commonprefix(df_.columns)
-    #         interaction_name += f"_{cat_name}"
-
-
-
-        
-    # scalars, subject_variables = (
-    #     [1 if c[0] == "+" else -1 for c in model_desc["indepvars"]],
-    #     [c[1:] for c in model_desc["indepvars"]]
-    # )
-    # design_df = (
-    #     subject_variables_df[["subject", *subject_variables]]
-    #     .sort_values(by="subject")
-    #     .reset_index(drop=True)
-    # )
-    # design_df["intercept"] = 1
-    # design_df.insert(0, "intercept", design_df.pop("intercept"))
-    # design_df.drop(columns=["subject"])
-    # return design_df
     
 
-
-    
 class OLSModel:
     def __init__(
         self,
