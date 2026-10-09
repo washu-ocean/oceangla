@@ -30,6 +30,7 @@ from .surface_utils import (
     get_biggest_surface_clusters,
     get_cluster_index_groups,
     get_template_midthicknesses_from_cifti_header,
+    get_template_midthickness_paths_from_cifti_header
 )
 from .volume_utils import (
     get_volume_array_from_cifti_array,
@@ -273,7 +274,20 @@ class TwoWayAnovaModel:
 
         elif isinstance(self.activation_img, nib.Cifti2Image) and hasattr(self.activation_img.header.get_axis(1), 'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
             self.out_suffix = ".dscalar.nii"
-
+            activation_img_path = self.model_outdir / "stacked_activation.dtseries.nii"
+            nib.save(self.activation_img, activation_img_path)
+            if config.fwhm > 0:
+                l_surf_path, r_surf_path = get_template_midthickness_paths_from_cifti_header(
+                    self.activation_img.header, self.model_desc["space"]
+                )
+                smoothed_activation_img_path = self.model_outdir / "smoothed_stacked_activation.dtseries.nii"
+                subprocess.run(shlex.split(
+                    "wb_command -cifti-smoothing "
+                    f"{str(activation_img_path.resolve())} {config.fwhm} {config.fwhm} COLUMN {str(smoothed_activation_img_path.resolve())} -fwhm "
+                    f"-left-surface {l_surf_path} -right-surface {r_surf_path}"
+                ))
+                self.activation_img = nib.load(smoothed_activation_img_path)
+                self.fdata = self.activation_img.get_fdata()
         self.design_df_with_sub.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t", index=False)
 
     def fit(self):

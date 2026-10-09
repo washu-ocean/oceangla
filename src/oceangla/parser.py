@@ -167,6 +167,13 @@ def _get_parser():
         default=0,
         help="Number of permutations to use for FWER and/or cluster correction",
     )
+    parser.add_argument(
+        "--fwhm",
+        type=_pos_int_or_zero,
+        dest="fwhm",
+        default=0,
+        help="FWHM smoothing kernel to apply to first-level maps"
+    )
     areamap_group = parser.add_mutually_exclusive_group()
     areamap_group.add_argument(
         "--preprocdir",
