@@ -48,7 +48,7 @@ def _run_model(
                     f"'beta' and 'variable'. Received {num_args}: {', '.join(model_desc['function_args'])}"
                 )
             model_desc["depvars"] = ["+" + model_desc["function_args"][0]] # will find a better way of adding scalars to this soon
-            model_desc["indepvars"] = []
+            model_desc["indepvars"] = "1"
             run_ols_model(model_desc, subject_activation_df, subject_variables_df)
         case "fir_rm_anova":
             pass
