@@ -171,12 +171,17 @@ def __get_twoway_anova_design_df(
     num_frames: int
 ) -> pd.DataFrame:
     variable = model_desc["function_args"][1]
-    categorical = isinstance(subject_variables_df[variable].dtype, pd.StringDtype)
+    if len(variable) > 3 and variable[:2] == "C(" and variable[-1] == ")":
+        categorical = True
+        variable = variable[2:-1]
+    else:
+        categorical = isinstance(subject_variables_df[variable].dtype, pd.StringDtype)
     design_df = (
         subject_variables_df[["subject", variable]]
         .sort_values(by="subject")
         .reset_index(drop=True)
     )
+    design_df = design_df[~design_df[variable].isna()]
     design_df["intercept"] = 1
     design_df.insert(1, "intercept", design_df.pop("intercept"))
     subj_series = pd.Series(np.repeat(design_df["subject"].to_numpy(), num_frames))
