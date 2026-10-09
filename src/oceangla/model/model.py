@@ -12,7 +12,7 @@ ModelDesc = TypedDict(
         "model_type": Required[str],
         "model_name": str,
         "depvars": list[str],
-        "indepvars": list[str],
+        "indepvars": str,
         "function_args": list[str],
         "session": str,
         "space": str,

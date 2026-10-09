@@ -100,6 +100,7 @@ def eval_scalar(name: str) -> str:
 class FormulaParser:
     def __init__(self, tokens, parse=True):
         self.pos = 0
+        self.string = tokens
         if (
             isinstance(tokens, list)
             and len(tokens) > 0
@@ -209,49 +210,8 @@ class FormulaParser:
         name += self.consume().value
         return name
 
-    def indepvar(self) -> list[str]:
-        indepvars=[]
-        if self.peek() == Token(type=TokenType.NUMBER, value="1"):
-            self.consume()
-        indepvars.extend(self.interaction())
-        while self.peek().type in (TokenType.PLUS, TokenType.MINUS, TokenType.LPAREN):
-            indepvars.extend(self.interaction())
-        return indepvars
-
-    def interaction(self) -> list[str]:
-        names=[""]
-        while self.peek().type in (TokenType.PLUS, TokenType.MINUS):
-            names[0] += self.consume().value
-        names[0]="+" if names[0] == "" else eval_scalar(names[0])
-        self.expect(TokenType.VAR)
-        names[0] += self.consume().value
-        op=None  # We can't chain expanded and explicit interactions, i.e. a*b:c would be an invalid interaction term, so we choose only one
-        while self.peek().type in (TokenType.MUL, TokenType.INTERACT):
-            if self.peek().type == TokenType.MUL and op in (None, TokenType.MUL):
-                if op is None:
-                    op=TokenType.MUL
-                self.consume()
-                names.append("")
-                while self.peek().type in (TokenType.PLUS, TokenType.MINUS):
-                    names[-1] += self.consume().value
-                names[-1]="+" if names[-1] == "" else eval_scalar(names[-1])
-                self.expect(TokenType.VAR)
-                names[-1] += self.consume().value
-                cur_name = names[-1]
-                names_ = deepcopy(names)
-                for name in names_[:-1]:
-                    names.append(f"{name}:{cur_name}")
-            elif self.peek().type == TokenType.INTERACT and op in (None, TokenType.INTERACT):
-                if op is None:
-                    op=TokenType.INTERACT
-                self.consume()
-                sign=""
-                while self.peek().type in (TokenType.PLUS, TokenType.MINUS):
-                    sign += self.consume().value
-                sign="+" if sign == "" else eval_scalar(sign)
-                self.expect(TokenType.VAR)
-                names[0].append(f":{sign}{self.consume().value}")
-        return names
+    def indepvar(self) -> str:
+        return self.string.split('~')[-1] # this is handled by patsy now
 
 
 def parse_model_file(model_file: Path) -> tuple[list[str], list[str]]:

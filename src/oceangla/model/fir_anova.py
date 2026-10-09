@@ -1,18 +1,17 @@
 from itertools import product
 import logging
-from collections import defaultdict, OrderedDict
-from pathlib import Path
-import json
 import math
 import re
 import random
+import subprocess
+import shlex
 
 import nibabel as nib
 from nibabel.cifti2.cifti2_axes import ScalarAxis
 import numpy as np
 import pandas as pd
-import progressbar
 import matplotlib.pyplot as plt
+
 
 # import ipdb
 from nilearn.image import resample_img
