@@ -112,6 +112,8 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
 def build_subject_activation_row_from_path(p: Path) -> dict | None:
     row = {}
     row["path"] = str(p)
+    if p.suffix == ".json":
+        return None
     try:
         (
             row["subject"],
