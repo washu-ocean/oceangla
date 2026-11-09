@@ -5,14 +5,14 @@ import numpy as np
 
 
 def get_spatial_slices(
-    activation: np.ndarray,
+    contrasts: np.ndarray,
     image_type: str = "CIFTI",
     volume_mask: nib.Nifti1Image | None = None,
 ) -> (tuple, int):
     if image_type == "CIFTI":
         return (
-            tuple((np.s_[:, idx] for idx in range(activation.shape[1]))),
-            int(activation.shape[1]),
+            tuple((np.s_[:, idx] for idx in range(contrasts.shape[1]))),
+            int(contrasts.shape[1]),
         )
     elif image_type == "NIFTI":
         if volume_mask is None:
@@ -21,11 +21,11 @@ def get_spatial_slices(
                     (
                         np.s_[x_idx, y_idx, z_idx, :]
                         for x_idx, y_idx, z_idx in product(
-                            *[range(shape) for shape in activation.shape[:3]]
+                            *[range(shape) for shape in contrasts.shape[:3]]
                         )
                     )
                 ),
-                int(np.prod(activation.shape[:3])),
+                int(np.prod(contrasts.shape[:3])),
             )
         else:
             return (

@@ -39,7 +39,7 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
             "subject": str
         }
     )
-    logger.info("Collecting subject activation...")
+    logger.info("Collecting subject contrasts...")
     config.firstlevel_contrasts_path = populate_firstlevel_contrasts_tsv(
         config.outdir_path,
         config.fladir_paths,

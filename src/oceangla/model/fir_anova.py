@@ -47,14 +47,14 @@ def run_anova_model(
     firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
-    get_img_cached = config.joblib_memory.cache(__get_anova_activation_img)
+    get_img_cached = config.joblib_memory.cache(__get_anova_contrasts_img)
     match model_desc["model_type"]:
         case "fir_twoway_rm_anova":
             num_frames = __get_num_frames(model_desc, firstlevel_contrasts_df)
             design_df, var_of_interest = __get_twoway_anova_design_df(model_desc, subject_variables_df, num_frames)
-            activation_img = get_img_cached(model_desc, firstlevel_contrasts_df, subject_variables_df, var_of_interest, num_frames)
+            contrasts_img = get_img_cached(model_desc, firstlevel_contrasts_df, subject_variables_df, var_of_interest, num_frames)
             TwoWayAnovaModel(
-                activation_img,
+                contrasts_img,
                 design_df,
                 model_desc,
                 num_frames,
@@ -97,7 +97,7 @@ def __get_num_frames(
     return num_frames
 
 
-def __get_anova_activation_img(
+def __get_anova_contrasts_img(
     model_desc: ModelDesc,
     firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame,
@@ -123,7 +123,7 @@ def __get_anova_activation_img(
         )
         .sort_values(by=["subject"])
     )["path"].to_list()
-    logger.debug("Loading activation...")
+    logger.debug("Loading contrasts...")
     # imgs = Parallel(n_jobs=10, verbose=10)(delayed(lambda p : nib.load(p))(p) for p in paths)
     img0 = nib.load(paths[0])
     if isinstance(img0, nib.Cifti2Image) and img0.dataobj.shape[0] == 1:
@@ -215,7 +215,7 @@ def __get_twoway_anova_design_df(
 class TwoWayAnovaModel:
     def __init__(
         self,
-        activation_img: nib.Cifti2Image | nib.Nifti1Image,
+        contrasts_img: nib.Cifti2Image | nib.Nifti1Image,
         design_df: pd.DataFrame,
         model_desc: ModelDesc,
         num_frames: int,
@@ -223,8 +223,8 @@ class TwoWayAnovaModel:
         alpha: float | list[float] = 0.05,
         **kwargs,
     ):
-        self.activation_img = activation_img
-        self.fdata = activation_img.get_fdata()
+        self.contrasts_img = contrasts_img
+        self.fdata = contrasts_img.get_fdata()
         self.design_df_with_sub = design_df
         self.design_df = self.design_df_with_sub.drop(columns=["subject"])
         self.num_frames = num_frames
@@ -243,9 +243,9 @@ class TwoWayAnovaModel:
 
         # volume-specific variables
         self.volume_mask = None
-        if isinstance(self.activation_img, nib.Nifti1Image):
+        if isinstance(self.contrasts_img, nib.Nifti1Image):
             self.out_suffix = ".nii.gz"
-            voxel_sizes = self.activation_img.header.get_zooms()[:3]
+            voxel_sizes = self.contrasts_img.header.get_zooms()[:3]
             # first check if any template resolution matches
 
             # TODO: handle cohorts
@@ -255,7 +255,7 @@ class TwoWayAnovaModel:
                     self.volume_mask = nib.load(
                         tflow.get(
                             self.model_desc["space"],
-                            resolution=self.activation_img.header.get_zooms()[0],
+                            resolution=self.contrasts_img.header.get_zooms()[0],
                             desc="brain",
                             suffix="mask",
                         )
@@ -277,22 +277,22 @@ class TwoWayAnovaModel:
                     interpolation="nearest",
                 )
 
-        elif isinstance(self.activation_img, nib.Cifti2Image) and hasattr(self.activation_img.header.get_axis(1), 'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
+        elif isinstance(self.contrasts_img, nib.Cifti2Image) and hasattr(self.contrasts_img.header.get_axis(1), 'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
             self.out_suffix = ".dscalar.nii"
-            activation_img_path = self.model_outdir / "stacked_activation.dtseries.nii"
-            nib.save(self.activation_img, activation_img_path)
+            contrasts_img_path = self.model_outdir / "stacked_contrasts.dtseries.nii"
+            nib.save(self.contrasts_img, contrasts_img_path)
             if config.fwhm > 0:
                 l_surf_path, r_surf_path = get_template_midthickness_paths_from_cifti_header(
-                    self.activation_img.header, self.model_desc["space"]
+                    self.contrasts_img.header, self.model_desc["space"]
                 )
-                smoothed_activation_img_path = self.model_outdir / "smoothed_stacked_activation.dtseries.nii"
+                smoothed_contrasts_img_path = self.model_outdir / "smoothed_stacked_contrasts.dtseries.nii"
                 subprocess.run(shlex.split(
                     "wb_command -cifti-smoothing "
-                    f"{str(activation_img_path.resolve())} {config.fwhm} {config.fwhm} COLUMN {str(smoothed_activation_img_path.resolve())} -fwhm "
+                    f"{str(contrasts_img_path.resolve())} {config.fwhm} {config.fwhm} COLUMN {str(smoothed_contrasts_img_path.resolve())} -fwhm "
                     f"-left-surface {l_surf_path} -right-surface {r_surf_path}"
                 ))
-                self.activation_img = nib.load(smoothed_activation_img_path)
-                self.fdata = self.activation_img.get_fdata()
+                self.contrasts_img = nib.load(smoothed_contrasts_img_path)
+                self.fdata = self.contrasts_img.get_fdata()
         self.design_df_with_sub.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t", index=False)
 
     def fit(self):
@@ -305,14 +305,14 @@ class TwoWayAnovaModel:
         design_matrix_no_int = design_matrix[[col for col in self.design_df if "interaction" not in col]]
         design_matrix_arr = design_matrix.to_numpy()
         design_matrix_arr_no_int = design_matrix_no_int.to_numpy()
-        if isinstance(self.activation_img, nib.Cifti2Image):
+        if isinstance(self.contrasts_img, nib.Cifti2Image):
             img_shape = (1, self.fdata.shape[1])
             glm_input_shape = self.fdata.shape
-        elif isinstance(self.activation_img, nib.Nifti1Image):
+        elif isinstance(self.contrasts_img, nib.Nifti1Image):
             img_shape = (*self.fdata.shape[:3], 1)
             glm_input_shape = (self.fdata.shape[3], math.prod(self.fdata.shape[:3]))
         else:
-            raise ValueError(f"Cannot fit GLM for image type: {type(self.activation_img)}")
+            raise ValueError(f"Cannot fit GLM for image type: {type(self.contrasts_img)}")
         Y = self.fdata.reshape(glm_input_shape)
         beta, _, _, _ = np.linalg.lstsq(
             design_matrix_arr,
@@ -350,7 +350,7 @@ class TwoWayAnovaModel:
         self.pval_sphericity_corr = pval_sphericity_corr.reshape(img_shape)
 
     def _save(self):
-        if isinstance(self.activation_img, nib.Nifti1Image):
+        if isinstance(self.contrasts_img, nib.Nifti1Image):
             for datatype, data in (
                 ("uncorr_pvals", self.uncorr_pvals),
                 ("fstat", self.fstat),
@@ -359,7 +359,7 @@ class TwoWayAnovaModel:
             ):
                 if data is None:
                     continue
-                img = nib.Nifti1Image(data, self.affine, header=self.activation_img.header)
+                img = nib.Nifti1Image(data, self.affine, header=self.contrasts_img.header)
                 nib.save(
                     img,
                     p := self.model_outdir
@@ -367,7 +367,7 @@ class TwoWayAnovaModel:
                 )
                 logger.info(f"Saved {p!s}")
                 del img
-        elif isinstance(self.activation_img, nib.Cifti2Image):
+        elif isinstance(self.contrasts_img, nib.Cifti2Image):
             for datatype, data in (
                 ("uncorr_pvals", self.uncorr_pval),
                 ("fstat", self.fstat),
@@ -380,7 +380,7 @@ class TwoWayAnovaModel:
                     data,
                     (
                         nib.cifti2.cifti2_axes.ScalarAxis(name=[datatype]),
-                        self.activation_img.header.get_axis(1),
+                        self.contrasts_img.header.get_axis(1),
                     ),
                 )
                 nib.save(
