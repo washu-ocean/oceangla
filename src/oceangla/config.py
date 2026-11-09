@@ -23,7 +23,7 @@ class config:  # All attributes are set in parser.py parse_args()
     session_ids: list[str] = []
     space_ids: list[str] = []
     standardization_method: str = "zscore"
-    subject_activation_path: Path | None = None
+    firstlevel_contrasts_path: Path | None = None
     subject_variables_path: Path | None = None
     task_ids: list[str] = []
     var_paths: list[Path] | None = None

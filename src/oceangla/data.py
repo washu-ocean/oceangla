@@ -40,13 +40,13 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
         }
     )
     logger.info("Collecting subject activation...")
-    config.subject_activation_path = populate_subject_activation_tsv(
+    config.firstlevel_contrasts_path = populate_firstlevel_contrasts_tsv(
         config.outdir_path,
         config.fladir_paths,
         reindex=config.reindex
     )
-    subject_activation_df = pd.read_csv(
-        config.subject_activation_path,
+    firstlevel_contrasts_df = pd.read_csv(
+        config.firstlevel_contrasts_path,
         sep="\t",
         dtype={
             "subject": str,
@@ -58,9 +58,9 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
         }
     )
     # Only include overlapping subjects in both dataframes
-    subject_activation_df = subject_activation_df[subject_activation_df["subject"].isin(subject_variables_df["subject"])]
-    subject_variables_df = subject_variables_df[subject_variables_df["subject"].isin(subject_activation_df["subject"])]
-    unique_spaces = subject_activation_df["space"].unique()
+    firstlevel_contrasts_df = firstlevel_contrasts_df[firstlevel_contrasts_df["subject"].isin(subject_variables_df["subject"])]
+    subject_variables_df = subject_variables_df[subject_variables_df["subject"].isin(firstlevel_contrasts_df["subject"])]
+    unique_spaces = firstlevel_contrasts_df["space"].unique()
     if len(config.space_ids) > 0:
         if (
             len((unique_spaces_ := 
@@ -70,7 +70,7 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
             raise ValueError(f"spaces {' '.join(config.space_ids)} not present in this dataset.")
         else:
             unique_spaces = unique_spaces_
-    unique_tasks = subject_activation_df["task"].unique()
+    unique_tasks = firstlevel_contrasts_df["task"].unique()
     if len(config.task_ids) > 0:
         if (
             len((unique_tasks_ := 
@@ -80,7 +80,7 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
             raise ValueError(f"tasks {' '.join(config.task_ids)} not present in this dataset.")
         else:
             unique_tasks = unique_tasks_
-    unique_sessions = subject_activation_df["session"].unique()
+    unique_sessions = firstlevel_contrasts_df["session"].unique()
     if len(config.session_ids) > 0:
         if (
             len((unique_sessions_ := 
@@ -104,12 +104,12 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
     logger.info(f"Will run {len(models)} total group-level models.")
     del parsed_models, unique_combos, unique_spaces, unique_tasks, unique_sessions
     print(models)
-    return (models, subject_activation_df, subject_variables_df)
+    return (models, firstlevel_contrasts_df, subject_variables_df)
 
    
 
 
-def build_subject_activation_row_from_path(p: Path) -> dict | None:
+def build_firstlevel_contrasts_row_from_path(p: Path) -> dict | None:
     row = {}
     row["path"] = str(p)
     if p.suffix == ".json":
@@ -137,25 +137,25 @@ def build_subject_activation_row_from_path(p: Path) -> dict | None:
         return None
 
 
-def populate_subject_activation_tsv(
+def populate_firstlevel_contrasts_tsv(
     output_dir: Path,
     fladirs: list[Path],
     reindex: bool = False
 ) -> Path:
-    if (subject_activation_tsv_path := (output_dir / "subject_activation.tsv")).is_file():
+    if (firstlevel_contrasts_tsv_path := (output_dir / "firstlevel_contrasts.tsv")).is_file():
         if reindex:
-            logger.info(f"Removing {subject_activation_tsv_path} and reindexing paths.")
-            subject_activation_tsv_path.unlink()
+            logger.info(f"Removing {firstlevel_contrasts_tsv_path} and reindexing paths.")
+            firstlevel_contrasts_tsv_path.unlink()
         else:
-            logger.info(f"{subject_activation_tsv_path} already exists. Use the --reindex option to reindex FLA paths if they have changed.")
-            return subject_activation_tsv_path
+            logger.info(f"{firstlevel_contrasts_tsv_path} already exists. Use the --reindex option to reindex FLA paths if they have changed.")
+            return firstlevel_contrasts_tsv_path
     files_of_interest = []
     for fladir in fladirs:
         files_of_interest.extend(
             fladir.glob("sub-*/ses-*/func/sub*condition*stat-effect_boldmap*")  # Include 'sub' at beginning of filename to avoid '._'-prefixed files
         )
 
-    rows = [build_subject_activation_row_from_path(p) for p in files_of_interest]
+    rows = [build_firstlevel_contrasts_row_from_path(p) for p in files_of_interest]
 
     paths_with_no_row = []  # Print out paths that were not included
     for i in range(len(rows)):
@@ -168,8 +168,8 @@ def populate_subject_activation_tsv(
 
     rows = list(filter(None, rows))
     df = pd.DataFrame(rows)
-    df.to_csv(subject_activation_tsv_path, sep="\t", index=False)
-    return subject_activation_tsv_path
+    df.to_csv(firstlevel_contrasts_tsv_path, sep="\t", index=False)
+    return firstlevel_contrasts_tsv_path
 
 
 def populate_subject_variables_tsv(

@@ -58,11 +58,11 @@ def save_null_histogram(
 
 def run_ols_model(
     model_desc: ModelDesc,
-    subject_activation_df: pd.DataFrame,
+    firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
     get_img_cached = config.joblib_memory.cache(__get_activation_img)
-    activation_img = get_img_cached(model_desc, subject_activation_df)
+    activation_img = get_img_cached(model_desc, firstlevel_contrasts_df)
     design_df = __get_design_df(model_desc, subject_variables_df)
     OLSModel(
         activation_img,
@@ -78,7 +78,7 @@ def run_ols_model(
 
 def __get_activation_img(
     model_desc: ModelDesc,
-    subject_activation_df: pd.DataFrame,
+    firstlevel_contrasts_df: pd.DataFrame,
 ):
     scalars, conditions = (
         [1 if c[0] == "+" else -1 for c in model_desc["firstlevel_contrasts"]],
@@ -94,7 +94,7 @@ def __get_activation_img(
     )
     if len(conditions) > 1:  # compute a contrast for each subject, then concatenate
         paths = (
-            subject_activation_df
+            firstlevel_contrasts_df
             .query(
                 "condition in @conditions and "
                 "frame_no == -1 and "
@@ -115,7 +115,7 @@ def __get_activation_img(
             return nib.Cifti2Image(
                 fdata_stacked,
                 header=(
-                    ScalarAxis(name=sorted(subject_activation_df["subject"].unique())),
+                    ScalarAxis(name=sorted(firstlevel_contrasts_df["subject"].unique())),
                     imgs[0].header.get_axis(1)
                 ),
                 nifti_header=imgs[0].nifti_header
@@ -136,7 +136,7 @@ def __get_activation_img(
             raise ValueError(f"Unexpected image type {type(imgs[0])} (this shouldn't happen)")
     else:
         paths = (
-            subject_activation_df
+            firstlevel_contrasts_df
             .query(
                 "condition == @conditions[0] and "
                 "frame_no == -1 and "
@@ -154,7 +154,7 @@ def __get_activation_img(
             return nib.Cifti2Image(
                 fdata_stacked,
                 header=(
-                    ScalarAxis(name=sorted(subject_activation_df["subject"].unique())),
+                    ScalarAxis(name=sorted(firstlevel_contrasts_df["subject"].unique())),
                     imgs[0].header.get_axis(1)
                 ),
                 nifti_header=imgs[0].nifti_header

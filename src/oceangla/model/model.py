@@ -24,22 +24,22 @@ ModelDesc = TypedDict(
 
 def run_models(
     model_descs: list[ModelDesc],
-    subject_activation_df: pd.DataFrame,
+    firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
     for model_desc in model_descs:
-        _run_model(model_desc, subject_activation_df, subject_variables_df)
+        _run_model(model_desc, firstlevel_contrasts_df, subject_variables_df)
 
 
 def _run_model(
     model_desc: ModelDesc,
-    subject_activation_df: pd.DataFrame,
+    firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
     match model_desc["model_type"]:
         case "OLS":
             from .ols import run_ols_model
-            run_ols_model(model_desc, subject_activation_df, subject_variables_df)
+            run_ols_model(model_desc, firstlevel_contrasts_df, subject_variables_df)
         case "onesampttest":
             from .ols import run_ols_model
             if (num_args := len(model_desc["function_args"])) != 1:
@@ -49,7 +49,7 @@ def _run_model(
                 )
             model_desc["firstlevel_contrasts"] = ["+" + model_desc["function_args"][0]] # will find a better way of adding scalars to this soon
             model_desc["subject_variables"] = "1"
-            run_ols_model(model_desc, subject_activation_df, subject_variables_df)
+            run_ols_model(model_desc, firstlevel_contrasts_df, subject_variables_df)
         case "fir_rm_anova":
             pass
         case "fir_twoway_rm_anova":
@@ -59,6 +59,6 @@ def _run_model(
                     f"'beta' and 'variable'. Received {num_args}: {', '.join(model_desc['function_args'])}"
                 )
             from .fir_anova import run_anova_model
-            run_anova_model(model_desc, subject_activation_df, subject_variables_df)
+            run_anova_model(model_desc, firstlevel_contrasts_df, subject_variables_df)
         case _:
             raise ValueError(f"Unknown function or model type {model_desc['model_type']}.")

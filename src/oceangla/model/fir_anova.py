@@ -44,15 +44,15 @@ logger = logging.getLogger(__name__)
 
 def run_anova_model(
     model_desc: ModelDesc,
-    subject_activation_df: pd.DataFrame,
+    firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
     get_img_cached = config.joblib_memory.cache(__get_anova_activation_img)
     match model_desc["model_type"]:
         case "fir_twoway_rm_anova":
-            num_frames = __get_num_frames(model_desc, subject_activation_df)
+            num_frames = __get_num_frames(model_desc, firstlevel_contrasts_df)
             design_df, var_of_interest = __get_twoway_anova_design_df(model_desc, subject_variables_df, num_frames)
-            activation_img = get_img_cached(model_desc, subject_activation_df, subject_variables_df, var_of_interest, num_frames)
+            activation_img = get_img_cached(model_desc, firstlevel_contrasts_df, subject_variables_df, var_of_interest, num_frames)
             TwoWayAnovaModel(
                 activation_img,
                 design_df,
@@ -67,7 +67,7 @@ def run_anova_model(
 
 def __get_num_frames(
     model_desc: ModelDesc,
-    subject_activation_df: pd.DataFrame
+    firstlevel_contrasts_df: pd.DataFrame
 ):
     condition = model_desc["function_args"][0]
     space, task, session = (
@@ -76,7 +76,7 @@ def __get_num_frames(
         model_desc["session"],
     )
     paths = (
-        subject_activation_df
+        firstlevel_contrasts_df
         .query(
             "condition == @condition and "
             "frame_no == -1 and "
@@ -99,7 +99,7 @@ def __get_num_frames(
 
 def __get_anova_activation_img(
     model_desc: ModelDesc,
-    subject_activation_df: pd.DataFrame,
+    firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame,
     var_of_interest: str,
     num_frames: int
@@ -111,9 +111,9 @@ def __get_anova_activation_img(
         model_desc["session"],
     )
     null_subjects = subject_variables_df.loc[subject_variables_df[var_of_interest].isna(), "subject"]
-    subject_activation_df_ = subject_activation_df[~subject_activation_df["subject"].isin(null_subjects)]
+    firstlevel_contrasts_df_ = firstlevel_contrasts_df[~firstlevel_contrasts_df["subject"].isin(null_subjects)]
     paths = (
-        subject_activation_df_
+        firstlevel_contrasts_df_
         .query(
             "condition == @condition and "
             "frame_no == -1 and "
@@ -135,7 +135,7 @@ def __get_anova_activation_img(
     logger.debug("Done!")
     if isinstance(img0, nib.Cifti2Image):
         logger.info("Concatenating...")
-        sub_count = len(subject_activation_df_["subject"].unique())
+        sub_count = len(firstlevel_contrasts_df_["subject"].unique())
         total_frames = num_frames * sub_count
         fdata_stacked = np.concatenate(fdatas, axis=0)
         logger.info("Making stacked image...")

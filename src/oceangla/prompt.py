@@ -11,7 +11,7 @@ def prompt_space(db_path: str) -> str:
         unique_spaces = [
             row[0]
             for row in cur.execute(
-                "SELECT DISTINCT space FROM subject_activation"
+                "SELECT DISTINCT space FROM firstlevel_contrasts"
             ).fetchall()
         ]
     assert len(unique_spaces) > 0, "No spaces found"
@@ -47,7 +47,7 @@ def prompt_task(db_path: str) -> str:
         unique_tasks = [
             row[0]
             for row in cur.execute(
-                "SELECT DISTINCT task FROM subject_activation"
+                "SELECT DISTINCT task FROM firstlevel_contrasts"
             ).fetchall()
         ]
     assert len(unique_tasks) > 0, "No tasks found"
