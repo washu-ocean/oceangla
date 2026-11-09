@@ -306,13 +306,14 @@ def _get_parser():
     return parser
 
 
-def parse_args():
-    parser = _get_parser()
-    args = parser.parse_args()
+def parse_args(parsed_args = None):
     from .config import config
-
-    if args.config is not None:
-        toml_data = loads(args.config.read_text())
+    if parsed_args is None:
+        parser = _get_parser()
+        parsed_args = parser.parse_args()
+        
+    if parsed_args.config is not None:
+        toml_data = loads(parsed_args.config.read_text())
         for k, v in toml_data["config"].items():
             if k in config._paths:
                 if isinstance(v, list):
@@ -328,14 +329,14 @@ def parse_args():
             ):
                 config.model_names.append(model_spec["name"])
                 config.models.append(model_spec["formula"])
-    for k, v in args.__dict__.items():
+    for k, v in parsed_args.__dict__.items():
         if v not in (None, []):
             setattr(config, k, v)
     if config.outdir_path is None:
         raise ValueError("Must specify an -o/--outdir path.")
     elif config.fladir_paths in (None, []):
         raise ValueError("Must specify at least one -f/--fladir path.")
-    if args.model_file is not None:
+    if parsed_args.model_file is not None:
         file_model_names, file_models = parse_model_file(config.model_file)
         for file_model_name, file_model in zip(file_model_names, file_models):
             if (
