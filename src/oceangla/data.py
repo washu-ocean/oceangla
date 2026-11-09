@@ -25,20 +25,6 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
         model_desc["model_name"] = model_name
         parsed_models.append(model_desc)
     logger.info(f"{len(parsed_models)} found.")
-    logger.info("Collecting subject variables...")
-    config.subject_variables_path = populate_subject_variables_tsv(
-        config.outdir_path,
-        config.var_paths,
-        standardization=config.standardization_method,
-        reindex=config.reindex
-    )
-    subject_variables_df = pd.read_csv(
-        config.subject_variables_path,
-        sep="\t",
-        dtype={
-            "subject": str
-        }
-    )
     logger.info("Collecting subject contrasts...")
     config.firstlevel_contrasts_path = populate_firstlevel_contrasts_tsv(
         config.outdir_path,
@@ -57,9 +43,32 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
             "frame_no": int
         }
     )
+    if config.var_paths:
+        logger.info("Collecting subject variables...")
+        config.subject_variables_path = populate_subject_variables_tsv(
+            config.outdir_path,
+            config.var_paths,
+            standardization=config.standardization_method,
+            reindex=config.reindex
+        )
+        subject_variables_df = pd.read_csv(
+            config.subject_variables_path,
+            sep="\t",
+            dtype={
+                "subject": str
+            }
+        )
+    else:   # Empty dataframe if no .csv/.tsv passed in
+        subject_variables_df = (
+            pd.DataFrame(
+                {"subject": firstlevel_contrasts_df["subject"]},
+                dtype=str
+            )
+            .drop_duplicates(ignore_index=True)
+        )
     # Only include overlapping subjects in both dataframes
-    firstlevel_contrasts_df = firstlevel_contrasts_df[firstlevel_contrasts_df["subject"].isin(subject_variables_df["subject"])]
-    subject_variables_df = subject_variables_df[subject_variables_df["subject"].isin(firstlevel_contrasts_df["subject"])]
+    firstlevel_contrasts_df = pd.merge(firstlevel_contrasts_df, subject_variables_df["subject"], how="inner", on="subject", sort=True).drop_duplicates()
+    subject_variables_df = pd.merge(subject_variables_df, firstlevel_contrasts_df["subject"], how="inner", on="subject", sort=True).drop_duplicates()
     unique_spaces = firstlevel_contrasts_df["space"].unique()
     if len(config.space_ids) > 0:
         if (

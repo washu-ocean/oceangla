@@ -199,6 +199,7 @@ def _get_parser():
         type=_indep_var_csv_or_tsv,
         nargs="+",
         dest="var_paths",
+        default=[],
         help="Path to .csv or .tsv file containing independent variables to include "
         "in the model. IMPORTANT: column containing subject IDs must be titled "
         "'subject' (program will throw an error if this is not true).",

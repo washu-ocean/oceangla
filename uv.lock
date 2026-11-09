@@ -1066,6 +1066,7 @@ dependencies = [
     { name = "templateflow" },
     { name = "textual" },
     { name = "tomlkit" },
+    { name = "tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -1095,6 +1096,7 @@ requires-dist = [
     { name = "templateflow", specifier = ">=25.1.2" },
     { name = "textual", specifier = ">=8.2.4" },
     { name = "tomlkit", specifier = ">=0.15.0" },
+    { name = "tqdm", specifier = ">=4.67.3" },
 ]
 
 [package.metadata.requires-dev]
