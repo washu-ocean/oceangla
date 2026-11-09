@@ -20,8 +20,8 @@ from patsy import dmatrix
 from tqdm import tqdm
 
 # from .model import GroupLevelModel
-from ..config import config
-from ..image_utils.cifti import cifti_compatible_structures
+from oceangla.config import config
+from oceangla.image_utils.cifti import cifti_compatible_structures
 from .correction import fdr_correct
 from .surface_utils import (
     build_adjacency_from_faces,

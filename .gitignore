@@ -18,3 +18,5 @@ test_models.txt
 .DS_Store
 
 .pdm-build/
+
+.idea/
