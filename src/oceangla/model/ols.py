@@ -17,6 +17,7 @@ from pathvalidate import sanitize_filename
 from scipy import stats
 from templateflow import api as tflow
 from patsy import dmatrix
+from tqdm import tqdm
 
 # from .model import GroupLevelModel
 from ..config import config
@@ -84,6 +85,7 @@ def __get_contrasts_img(
         [1 if c[0] == "+" else -1 for c in model_desc["firstlevel_contrasts"]],
         [c[1:] for c in model_desc["firstlevel_contrasts"]]
     )
+    print(conditions)
     if len(scalars) > 1:  # Make sure we're scaling these in the right order after sorting the dataframe by subject/condition
         sorted_pairs = sorted(zip(scalars, conditions), key=lambda tup : tup[1])
         scalars, conditions = map(list, zip(*sorted_pairs))
@@ -104,36 +106,53 @@ def __get_contrasts_img(
             )
             .sort_values(by=["subject", "condition"])
         )["path"]
-        imgs = [nib.load(p) for p in paths]
-        if isinstance(imgs[0], nib.Cifti2Image):
-            fdatas = [img.get_fdata() for img in imgs]
+        imgs = []
+        for p in tqdm(paths, desc="Loading contrast maps..."):
+            imgs.append(nib.load(p))
+        img0 = imgs[0]
+        logger.info("Stacking contrast maps...")
+        if isinstance(img0, nib.Cifti2Image):
             fdata_stacked_list = []
             for i in range(len(conditions)):
-                fdata_stacked_list.append(np.concatenate(fdatas[i::len(conditions)], axis=0, dtype=np.float32))
+                fdata_stacked_list.append(
+                    # np.concatenate(fdatas[i::len(conditions)], axis=0, dtype=np.float32)
+                    np.empty((len(imgs) // len(conditions), img0.shape[1]))
+                )
+                sub_idx = 0
+                for j in range(i, len(imgs), len(conditions)):
+                    fdata_stacked_list[-1][sub_idx, :] = imgs[j].get_fdata(dtype=np.float32)
+                    sub_idx += 1
                 fdata_stacked_list[-1] *= scalars[i]
-            fdata_stacked = np.sum(fdata_stacked_list, axis=1, dtype=np.float32)
+            fdata_stacked = np.sum(fdata_stacked_list, axis=1, dtype=np.float32) / len(conditions)
             return nib.Cifti2Image(
                 fdata_stacked,
                 header=(
                     ScalarAxis(name=sorted(firstlevel_contrasts_df["subject"].unique())),
-                    imgs[0].header.get_axis(1)
+                    img0.header.get_axis(1)
                 ),
-                nifti_header=imgs[0].nifti_header
+                nifti_header=img0.nifti_header
             )
-        elif isinstance(imgs[0], nib.Nifti1Image):
-            fdatas = [img.get_fdata() for img in imgs]
+        elif isinstance(img0, nib.Nifti1Image):
+            # fdatas = [img.get_fdata() for img in imgs]
             fdata_stacked_list = []
             for i in range(len(conditions)):
-                fdata_stacked_list.append(np.concatenate(fdatas[i::len(conditions)], axis=3, dtype=np.float32))
+                fdata_stacked_list.append(
+                    # np.concatenate(fdatas[i::len(conditions)], axis=0, dtype=np.float32)
+                    np.empty((*img0.shape[:3], len(imgs) // len(conditions)), dtype=np.float32)
+                )
+                sub_idx = 0
+                for j in range(i, len(imgs), len(conditions)):
+                    fdata_stacked_list[-1][sub_idx, :] = imgs[j].get_fdata(dtype=np.float32)
+                    sub_idx += 1
                 fdata_stacked_list[-1] *= scalars[i]
-            fdata_stacked = np.sum(fdata_stacked_list, axis=(0, 1, 2), dtype=np.float32)
+            fdata_stacked = np.sum(fdata_stacked_list, axis=(0, 1, 2), dtype=np.float32) / len(conditions)
             return nib.Nifti1Image(
                 fdata_stacked,
-                affine=imgs[0].affine,
-                header=imgs[0].header
+                affine=img0.affine,
+                header=img0.header
             )
         else:
-            raise ValueError(f"Unexpected image type {type(imgs[0])} (this shouldn't happen)")
+            raise ValueError(f"Unexpected image type {type(img0)} (this shouldn't happen)")
     else:
         paths = (
             firstlevel_contrasts_df
@@ -146,29 +165,36 @@ def __get_contrasts_img(
             )
             .sort_values(by="subject")
         )["path"]
-        imgs = [nib.load(p) for p in paths]
-        fdatas = [img.get_fdata() for img in imgs]
-        if isinstance(imgs[0], nib.Cifti2Image):
-            fdata_stacked = np.concatenate(fdatas, axis=0)
+        imgs = []
+        for p in tqdm(paths, desc="Loading contrast maps..."):
+            imgs.append(nib.load(p))
+        img0 = imgs[0]
+        if isinstance(img0, nib.Cifti2Image):
+            fdata_stacked = np.empty((len(imgs), img0.shape[1]), dtype=np.float32)
+            for i, img in tqdm(enumerate(imgs), desc="Stacking contrast maps..."):
+                fdata_stacked[i, :] = img.get_fdata(dtype=np.float32)
             fdata_stacked *= scalars[0]
             return nib.Cifti2Image(
                 fdata_stacked,
                 header=(
                     ScalarAxis(name=sorted(firstlevel_contrasts_df["subject"].unique())),
-                    imgs[0].header.get_axis(1)
+                    img0.header.get_axis(1)
                 ),
-                nifti_header=imgs[0].nifti_header
+                nifti_header=img0.nifti_header
             )
-        elif isinstance(imgs[0], nib.Nifti1Image):
-            fdata_stacked = np.concatenate(fdatas, axis=3)
+        elif isinstance(img0, nib.Nifti1Image):
+            fdata_stacked = np.empty((*img0.shape[:3], len(imgs)), dtype=np.float32)
+            for i, img in tqdm(enumerate(imgs), desc="Stacking contrast maps..."):
+                fdata_stacked[..., i] = img.get_fdata(dtype=np.float32)
+            fdata_stacked *= scalars[0]
             return nib.Nifti1Image(
                 fdata_stacked,
-                affine=imgs[0].affine,
-                header=imgs[0].header
+                affine=img0.affine,
+                header=img0.header
             )
         else:
-            raise ValueError(f"Unexpected image type {type(imgs[0])} (this shouldn't happen)")
-
+            raise ValueError(f"Unexpected image type {type(img0)} (this shouldn't happen)")
+        
 
 def __get_design_df(
     model_desc: ModelDesc,
@@ -323,6 +349,7 @@ class OLSModel:
         else:
             raise ValueError(f"Cannot fit GLM for image type: {type(self.contrasts_img)}")
         n, p = design_matrix_arr.shape
+        breakpoint()
         beta, ssr, rank, s = np.linalg.lstsq(
             design_matrix_arr,
             self.fdata.reshape(glm_input_shape),
