@@ -6,13 +6,13 @@ from ..formula import parse_model_file
 @pytest.mark.parametrize(
     "line,expected_model_name,expected_model",
     [
-        ("model1 -> depvar ~ indepvar", "model1", "depvar ~ indepvar"),
+        ("model1 -> firstlevel_contrasts ~ subject_variables", "model1", "firstlevel_contrasts ~ subject_variables"),
         (
-            "model2 -> depvar1 - depvar2 ~ indepvar",
+            "model2 -> firstlevel_contrasts1 - firstlevel_contrasts2 ~ subject_variables",
             "model2",
-            "depvar1 - depvar2 ~ indepvar",
+            "firstlevel_contrasts1 - firstlevel_contrasts2 ~ subject_variables",
         ),
-        pytest.param("-> depvar ~ indepvar", None, None, marks=pytest.mark.xfail),
+        pytest.param("-> firstlevel_contrasts ~ subject_variables", None, None, marks=pytest.mark.xfail),
         pytest.param("modelname -> ", None, None, marks=pytest.mark.xfail),
         pytest.param("", None, None, marks=pytest.mark.xfail),
     ],

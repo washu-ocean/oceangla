@@ -81,8 +81,8 @@ def __get_activation_img(
     subject_activation_df: pd.DataFrame,
 ):
     scalars, conditions = (
-        [1 if c[0] == "+" else -1 for c in model_desc["depvars"]],
-        [c[1:] for c in model_desc["depvars"]]
+        [1 if c[0] == "+" else -1 for c in model_desc["firstlevel_contrasts"]],
+        [c[1:] for c in model_desc["firstlevel_contrasts"]]
     )
     if len(scalars) > 1:  # Make sure we're scaling these in the right order after sorting the dataframe by subject/condition
         sorted_pairs = sorted(zip(scalars, conditions), key=lambda tup : tup[1])
@@ -174,7 +174,7 @@ def __get_design_df(
     model_desc: ModelDesc,
     subject_variables_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    design_df = dmatrix(model_desc["indepvars"], subject_variables_df, return_type="dataframe")
+    design_df = dmatrix(model_desc["subject_variables"], subject_variables_df, return_type="dataframe")
     design_df["subject"] = subject_variables_df["subject"]
     design_df = (
         design_df

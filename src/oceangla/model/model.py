@@ -11,8 +11,8 @@ ModelDesc = TypedDict(
     {
         "model_type": Required[str],
         "model_name": str,
-        "depvars": list[str],
-        "indepvars": str,
+        "firstlevel_contrasts": list[str],
+        "subject_variables": str,
         "function_args": list[str],
         "session": str,
         "space": str,
@@ -47,8 +47,8 @@ def _run_model(
                     "Function fir_twoway_rm_anova() takes 2 arguments: "
                     f"'beta' and 'variable'. Received {num_args}: {', '.join(model_desc['function_args'])}"
                 )
-            model_desc["depvars"] = ["+" + model_desc["function_args"][0]] # will find a better way of adding scalars to this soon
-            model_desc["indepvars"] = "1"
+            model_desc["firstlevel_contrasts"] = ["+" + model_desc["function_args"][0]] # will find a better way of adding scalars to this soon
+            model_desc["subject_variables"] = "1"
             run_ols_model(model_desc, subject_activation_df, subject_variables_df)
         case "fir_rm_anova":
             pass

@@ -150,9 +150,9 @@ class FormulaParser:
 
     def parse(self) -> ModelDesc:
         return self.statement()
-        # depvar = self.depvar()
-        # indepvar = self.indepvar()
-        # return (depvar, indepvar)
+        # firstlevel_contrasts = self.firstlevel_contrasts()
+        # subject_variables = self.subject_variables()
+        # return (firstlevel_contrasts, subject_variables)
 
     def statement(self) -> ModelDesc:
         if len(list(filter(lambda t: t.type == TokenType.TILDE, self.tokens))) == 1:
@@ -182,23 +182,23 @@ class FormulaParser:
         return arglist
 
     def expression(self) -> ModelDesc:
-        depvar=self.depvar()
-        indepvar=self.indepvar()
+        firstlevel_contrasts=self.firstlevel_contrasts()
+        subject_variables=self.subject_variables()
         return {
             "model_type": "OLS",
-            "depvars": depvar,
-            "indepvars": indepvar
+            "firstlevel_contrasts": firstlevel_contrasts,
+            "subject_variables": subject_variables
         }
 
-    def depvar(self) -> list[str]:
-        depvarnames=[]
-        depvarnames.append(self.depvarname())
+    def firstlevel_contrasts(self) -> list[str]:
+        firstlevel_contrasts_names=[]
+        firstlevel_contrasts_names.append(self.firstlevel_contrasts_name())
         while self.peek().type != TokenType.TILDE:
-            depvarnames.append(self.depvarname())
+            firstlevel_contrasts_names.append(self.firstlevel_contrasts_name())
         self.consume()
-        return depvarnames
+        return firstlevel_contrasts_names
 
-    def depvarname(self) -> str:
+    def firstlevel_contrasts_name(self) -> str:
         name=""
 
         while self.peek().type in (TokenType.PLUS, TokenType.MINUS):
@@ -210,7 +210,7 @@ class FormulaParser:
         name += self.consume().value
         return name
 
-    def indepvar(self) -> str:
+    def subject_variables(self) -> str:
         return self.string.split('~')[-1] # this is handled by patsy now
 
 
@@ -233,7 +233,7 @@ def parse_model_file(model_file: Path) -> tuple[list[str], list[str]]:
                 must contain a model name and formula, separated by an
                 arrow '->'. Example file contents:
 
-                model1     ->     depvar ~ indepvar1 + indepvar2
+                model1     ->     firstlevel_contrasts ~ subject_variables1 + subject_variables2
                 model2     ->     fir_rmanova(oddball)
                 ^                 ^
                 |                 |

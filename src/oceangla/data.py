@@ -26,7 +26,7 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
         parsed_models.append(model_desc)
     logger.info(f"{len(parsed_models)} found.")
     logger.info("Collecting subject variables...")
-    config.subject_variables_path = populate_indepvar_tsv(
+    config.subject_variables_path = populate_subject_variables_tsv(
         config.outdir_path,
         config.var_paths,
         standardization=config.standardization_method,
@@ -172,7 +172,7 @@ def populate_subject_activation_tsv(
     return subject_activation_tsv_path
 
 
-def populate_indepvar_tsv(
+def populate_subject_variables_tsv(
     output_dir: Path,
     var_paths: list[Path],
     categorical_columns: list[str] = [],
@@ -183,13 +183,13 @@ def populate_indepvar_tsv(
     if standardization not in ("zscore", "meancenter", "none"):
         raise ValueError(f"Standardization method must be one of 'zscore', 'meancenter', or 'none'. Received {standardization}")
 
-    if (indepvar_tsv_path := (output_dir / "indepvar.tsv")).is_file():
+    if (subject_variables_tsv_path := (output_dir / "subject_variables.tsv")).is_file():
         if reindex:
-            logger.info(f"Removing {indepvar_tsv_path} and reindexing paths.")
-            indepvar_tsv_path.unlink()
+            logger.info(f"Removing {subject_variables_tsv_path} and reindexing paths.")
+            subject_variables_tsv_path.unlink()
         else:
-            logger.info(f"{indepvar_tsv_path} already exists. Use the --reindex option to reindex subject-specific variables if they have changed.")
-            return indepvar_tsv_path
+            logger.info(f"{subject_variables_tsv_path} already exists. Use the --reindex option to reindex subject-specific variables if they have changed.")
+            return subject_variables_tsv_path
         
     dfs = []
     for var_path in var_paths:
@@ -222,5 +222,5 @@ def populate_indepvar_tsv(
                     continue
         
     df_ = pd.concat(dfs, ignore_index=True)
-    df_.to_csv(indepvar_tsv_path, sep="\t", index=False)
-    return indepvar_tsv_path
+    df_.to_csv(subject_variables_tsv_path, sep="\t", index=False)
+    return subject_variables_tsv_path
