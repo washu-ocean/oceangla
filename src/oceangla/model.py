@@ -1,4 +1,5 @@
-from typing import TypedDict, Required
+from typing import TypedDict, Required, List
+from dataclasses import dataclass, field
 import logging
 
 import pandas as pd
@@ -6,59 +7,82 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-ModelDesc = TypedDict(
-    "ModelDesc",
-    {
-        "model_type": Required[str],
-        "model_name": str,
-        "firstlevel_contrasts": list[str],
-        "subject_variables": str,
-        "function_args": list[str],
-        "session": str,
-        "space": str,
-        "task": str,
-        "frame_count": np.uint32
-    },
-    total=False
-)
+@dataclass
+class FirstLevelContrast:
+    name: str = field(default_factory=str)
+    scalar: int = 1
+
+@dataclass
+class ModelSpec:
+    model_type: str = field(default_factory=str)
+    model_name: str = field(default_factory=str)
+    firstlevel_contrasts: List[FirstLevelContrast] = field(default_factory=list)
+    subject_variables: str = field(default_factory=str)
+    function_args: List[str] = field(default_factory=list)
+    session: str = field(default_factory=str)
+    space: str = field(default_factory=str)
+    task: str = field(default_factory=str)
+    frame_count: int = 1
+
+# ModelDesc = TypedDict(
+#     "ModelDesc",
+#     {
+#         "model_type": Required[str],
+#         "model_name": str,
+#         "firstlevel_contrasts": list[str],
+#         "subject_variables": str,
+#         "function_args": list[str],
+#         "session": str,
+#         "space": str,
+#         "task": str,
+#         "frame_count": np.uint32
+#     },
+#     total=False
+# )
 
 def run_models(
-    model_descs: list[ModelDesc],
+    model_specs: List[ModelSpec],
     firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
-    for model_desc in model_descs:
-        _run_model(model_desc, firstlevel_contrasts_df, subject_variables_df)
+    for model_spec in model_specs:
+        _run_model(model_spec, firstlevel_contrasts_df, subject_variables_df)
 
 
 def _run_model(
-    model_desc: ModelDesc,
+    model_spec: ModelSpec,
     firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
-    match model_desc["model_type"]:
+    match model_spec.model_type:
         case "OLS":
             from .ols import run_ols_model
-            run_ols_model(model_desc, firstlevel_contrasts_df, subject_variables_df)
+            run_ols_model(model_spec, firstlevel_contrasts_df, subject_variables_df)
         case "onesampttest":
             from .ols import run_ols_model
-            if (num_args := len(model_desc["function_args"])) != 1:
+            if (num_args := len(model_spec.function_args)) != 1:
                 raise ValueError(
                     "Function fir_twoway_rm_anova() takes 2 arguments: "
-                    f"'beta' and 'variable'. Received {num_args}: {', '.join(model_desc['function_args'])}"
+                    f"'beta' and 'variable'. Received {num_args}: {', '.join(model_spec['function_args'])}"
                 )
-            model_desc["firstlevel_contrasts"] = ["+" + model_desc["function_args"][0]] # will find a better way of adding scalars to this soon
-            model_desc["subject_variables"] = "1"
-            run_ols_model(model_desc, firstlevel_contrasts_df, subject_variables_df)
+            model_spec.firstlevel_contrasts = [FirstLevelContrast(name=model_spec.function_args[0])]
+            model_spec.subject_variables = "1"
+            run_ols_model(model_spec, firstlevel_contrasts_df, subject_variables_df)
         case "fir_rm_anova":
-            pass
-        case "fir_twoway_rm_anova":
-            if (num_args := len(model_desc["function_args"])) != 2:
+            if (num_args := len(model_spec.function_args)) != 1:
                 raise ValueError(
-                    "Function fir_twoway_rm_anova() takes 2 arguments: "
-                    f"'beta' and 'variable'. Received {num_args}: {', '.join(model_desc['function_args'])}"
+                    "Function fir_rm_anova() takes 1 argument: "
+                    f"'beta'. Received {num_args}: {', '.join(model_spec.function_args)}"
                 )
             from .fir_anova import run_anova_model
-            run_anova_model(model_desc, firstlevel_contrasts_df, subject_variables_df)
+            run_anova_model(model_spec, firstlevel_contrasts_df, subject_variables_df)
+        case "fir_twoway_rm_anova":
+            if (num_args := len(model_spec.function_args)) != 2:
+                raise ValueError(
+                    "Function fir_twoway_rm_anova() takes 2 arguments: "
+                    f"'beta' and 'variable'. Received {num_args}: {', '.join(model_spec['function_args'])}"
+                )
+            from .fir_anova import run_anova_model
+            run_anova_model(model_spec, firstlevel_contrasts_df, subject_variables_df)
         case _:
-            raise ValueError(f"Unknown function or model type {model_desc['model_type']}.")
+            raise ValueError(f"Unknown function or model type {model_spec['model_type']}.")

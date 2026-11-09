@@ -8,7 +8,7 @@ import pandas as pd
 
 from .formula import FormulaParser
 from .config import config
-from .model import ModelDesc
+from .model import ModelSpec
 
 
 logger = logging.getLogger(__name__)
@@ -16,14 +16,14 @@ logger = logging.getLogger(__name__)
 ROW_REGEX = re.compile(r'sub-([a-zA-Z0-9]+)_ses-([a-zA-Z0-9]+)_task-([a-zA-Z0-9]+)_space-([a-zA-Z0-9\-]+)_condition-([a-zA-Z0-9\-]+)_*stat-effect_boldmap(.*)')
 
 
-def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.DataFrame]:
+def collect_models_and_dataframes() -> tuple[list[ModelSpec], pd.DataFrame, pd.DataFrame]:
     logger.info("Parsing model(s)...")
-    models = [] # list of ModelDesc including space, task, session ids
-    parsed_models = [] # list of ModelDesc after just parsing formulas
+    models = [] # list of ModelSpec including space, task, session ids
+    parsed_models = [] # list of ModelSpec after just parsing formulas
     for model_name, model_formula in zip(config.model_names, config.models):
-        model_desc = FormulaParser(model_formula).model_desc
-        model_desc["model_name"] = model_name
-        parsed_models.append(model_desc)
+        model_spec = FormulaParser(model_formula).model_spec
+        model_spec.model_name = model_name
+        parsed_models.append(model_spec)
     logger.info(f"{len(parsed_models)} found.")
     logger.info("Collecting subject contrasts...")
     config.firstlevel_contrasts_path = populate_firstlevel_contrasts_tsv(
@@ -43,7 +43,7 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
             "frame_no": int
         }
     )
-    if config.var_paths:
+    if config.var_paths is not None:
         logger.info("Collecting subject variables...")
         config.subject_variables_path = populate_subject_variables_tsv(
             config.outdir_path,
@@ -103,9 +103,9 @@ def collect_models_and_dataframes() -> tuple[list[ModelDesc], pd.DataFrame, pd.D
     for desc, combo in product(parsed_models, unique_combos):
         models.append(deepcopy(desc))
         (
-            models[-1]["space"],
-            models[-1]["task"],
-            models[-1]["session"]
+            models[-1].space,
+            models[-1].task,
+            models[-1].session
         ) = combo
     logger.info(f"Will run each model {len(unique_combos)} times for each (template space - task - session) combo:")
     for combo in unique_combos:

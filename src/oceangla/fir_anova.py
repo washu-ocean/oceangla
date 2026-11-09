@@ -37,43 +37,52 @@ from .volume_utils import (
     get_biggest_voxel_cluster_sizes,
     get_voxel_clusters,
 )
-from .model import ModelDesc
+from .model import ModelSpec
 
 logger = logging.getLogger(__name__)
 
 
 def run_anova_model(
-    model_desc: ModelDesc,
+    model_spec: ModelSpec,
     firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
     get_img_cached = config.joblib_memory.cache(__get_anova_contrasts_img)
-    match model_desc["model_type"]:
+    match model_spec.model_type:
         case "fir_twoway_rm_anova":
-            num_frames = __get_num_frames(model_desc, firstlevel_contrasts_df)
-            design_df, var_of_interest = __get_twoway_anova_design_df(model_desc, subject_variables_df, num_frames)
-            contrasts_img = get_img_cached(model_desc, firstlevel_contrasts_df, subject_variables_df, var_of_interest, num_frames)
+            num_frames = __get_num_frames(model_spec, firstlevel_contrasts_df)
+            design_df, var_of_interest = __get_twoway_anova_design_df(model_spec, subject_variables_df, num_frames)
+            contrasts_img = get_img_cached(model_spec, firstlevel_contrasts_df, num_frames, subject_variables_df=subject_variables_df, var_of_interest=var_of_interest)
             TwoWayAnovaModel(
                 contrasts_img,
                 design_df,
-                model_desc,
+                model_spec,
                 num_frames,
                 var_of_interest,
                 alpha=config.alphas
             ).fit()
         case "fir_rm_anova":
-            raise NotImplementedError("One-way ANOVA not yet implemented.")
+            num_frames = __get_num_frames(model_spec, firstlevel_contrasts_df)
+            contrasts_img = get_img_cached(model_spec, firstlevel_contrasts_df, num_frames)
+            RMAnovaModel(
+                contrasts_img,
+                model_spec,
+                num_frames,
+                alpha=config.alphas
+            ).fit()
+        case _:
+            raise NotImplementedError(f"{model_spec.model_type} not implemented yet.")
 
 
 def __get_num_frames(
-    model_desc: ModelDesc,
+    model_spec: ModelSpec,
     firstlevel_contrasts_df: pd.DataFrame
 ):
-    condition = model_desc["function_args"][0]
+    condition = model_spec.function_args[0]
     space, task, session = (
-        model_desc["space"],
-        model_desc["task"],
-        model_desc["session"],
+        model_spec.space,
+        model_spec.task,
+        model_spec.session,
     )
     paths = (
         firstlevel_contrasts_df
@@ -98,20 +107,23 @@ def __get_num_frames(
 
 
 def __get_anova_contrasts_img(
-    model_desc: ModelDesc,
+    model_spec: ModelSpec,
     firstlevel_contrasts_df: pd.DataFrame,
-    subject_variables_df: pd.DataFrame,
-    var_of_interest: str,
-    num_frames: int
+    num_frames: int,
+    subject_variables_df: pd.DataFrame | None = None,
+    var_of_interest: str | None = None,
 ):
-    condition = model_desc["function_args"][0]
+    condition = model_spec.function_args[0]
     space, task, session = (
-        model_desc["space"],
-        model_desc["task"],
-        model_desc["session"],
+        model_spec.space,
+        model_spec.task,
+        model_spec.session,
     )
-    null_subjects = subject_variables_df.loc[subject_variables_df[var_of_interest].isna(), "subject"]
-    firstlevel_contrasts_df_ = firstlevel_contrasts_df[~firstlevel_contrasts_df["subject"].isin(null_subjects)]
+    if var_of_interest is not None and subject_variables_df is not None:
+        null_subjects = subject_variables_df.loc[subject_variables_df[var_of_interest].isna(), "subject"]
+        firstlevel_contrasts_df_ = firstlevel_contrasts_df[~firstlevel_contrasts_df["subject"].isin(null_subjects)]
+    else:
+        firstlevel_contrasts_df_ = firstlevel_contrasts_df.copy()
     paths = (
         firstlevel_contrasts_df_
         .query(
@@ -166,11 +178,11 @@ def __get_anova_contrasts_img(
 
 
 def __get_twoway_anova_design_df(
-    model_desc: ModelDesc,
+    model_spec: ModelSpec,
     subject_variables_df: pd.DataFrame,
     num_frames: int
 ) -> pd.DataFrame:
-    variable = model_desc["function_args"][1]
+    variable = model_spec.function_args[1]
     if len(variable) > 3 and variable[:2] == "C(" and variable[-1] == ")":
         categorical = True
         variable = variable[2:-1]
@@ -217,7 +229,7 @@ class TwoWayAnovaModel:
         self,
         contrasts_img: nib.Cifti2Image | nib.Nifti1Image,
         design_df: pd.DataFrame,
-        model_desc: ModelDesc,
+        model_spec: ModelSpec,
         num_frames: int,
         var_of_interest: str,
         alpha: float | list[float] = 0.05,
@@ -230,8 +242,8 @@ class TwoWayAnovaModel:
         self.num_frames = num_frames
         self.var_of_interest = var_of_interest
         self.value_names = list(design_df.columns)
-        self.model_desc = model_desc
-        self.model_outdir = config.outdir_path / sanitize_filename(self.model_desc["model_name"])
+        self.model_spec = model_spec
+        self.model_outdir = config.outdir_path / sanitize_filename(self.model_spec.model_name)
         if not self.model_outdir.is_dir():
             self.model_outdir.mkdir(parents=True, exist_ok=True)
         self.alphas = [alpha] if isinstance(alpha, float) else alpha
@@ -250,11 +262,11 @@ class TwoWayAnovaModel:
 
             # TODO: handle cohorts
             # TODO: write test for making sure cohort-specific spaces
-            for k, v in tflow.get_metadata(self.model_desc["space"])["res"].items():
+            for k, v in tflow.get_metadata(self.model_spec.space)["res"].items():
                 if np.allclose(voxel_sizes, v["zooms"]):
                     self.volume_mask = nib.load(
                         tflow.get(
-                            self.model_desc["space"],
+                            self.model_spec.space,
                             resolution=self.contrasts_img.header.get_zooms()[0],
                             desc="brain",
                             suffix="mask",
@@ -266,7 +278,7 @@ class TwoWayAnovaModel:
                 self.volume_mask = resample_img(
                     nib.load(
                         tflow.get(
-                            self.model_desc["space"],
+                            self.model_spec.space,
                             resolution=np.floor(voxel_sizes[0]),
                             desc="brain",
                             suffix="mask",
@@ -283,7 +295,7 @@ class TwoWayAnovaModel:
             nib.save(self.contrasts_img, contrasts_img_path)
             if config.fwhm > 0:
                 l_surf_path, r_surf_path = get_template_midthickness_paths_from_cifti_header(
-                    self.contrasts_img.header, self.model_desc["space"]
+                    self.contrasts_img.header, self.model_spec.space
                 )
                 smoothed_contrasts_img_path = self.model_outdir / "smoothed_stacked_contrasts.dtseries.nii"
                 subprocess.run(shlex.split(
@@ -296,7 +308,7 @@ class TwoWayAnovaModel:
         self.design_df_with_sub.to_csv(self.model_outdir / "design_matrix.tsv", sep="\t", index=False)
 
     def fit(self):
-        print(f"Running {self.model_desc}")
+        print(f"Running {self.model_spec}")
         self._fit()
         self._save()
 
@@ -363,7 +375,7 @@ class TwoWayAnovaModel:
                 nib.save(
                     img,
                     p := self.model_outdir
-                    / f"{sanitize_filename(self.model_desc['model_name'])}_{datatype}.nii.gz",
+                    / f"{sanitize_filename(self.model_spec.model_name)}_{datatype}.nii.gz",
                 )
                 logger.info(f"Saved {p!s}")
                 del img
@@ -386,7 +398,7 @@ class TwoWayAnovaModel:
                 nib.save(
                     img,
                     p := self.model_outdir
-                    / f"{sanitize_filename(self.model_desc['model_name'])}_{datatype}.dscalar.nii",
+                    / f"{sanitize_filename(self.model_spec.model_name)}_{datatype}.dscalar.nii",
                 )
                 logger.info(f"Saved {p!s}")
                 del img
@@ -409,3 +421,191 @@ class TwoWayAnovaModel:
         df_[between_group_columns] = pd.concat(between_groups, ignore_index=True)
         return df_
 
+
+class RMAnovaModel:
+    def __init__(
+            self,
+            contrasts_img: nib.Cifti2Image | nib.Nifti1Image,
+            model_spec: ModelSpec,
+            num_frames: int,
+            alpha: float | list[float] = 0.05,
+            **kwargs,
+    ):
+        self.contrasts_img = contrasts_img
+        self.fdata = contrasts_img.get_fdata()
+        self.num_frames = num_frames
+        self.model_spec = model_spec
+        self.model_outdir = config.outdir_path / sanitize_filename(self.model_spec.model_name)
+        if not self.model_outdir.is_dir():
+            self.model_outdir.mkdir(parents=True, exist_ok=True)
+        self.alphas = [alpha] if isinstance(alpha, float) else alpha
+        self.uncorr_pvals = None
+        self.tstats = None
+        self.betas = None
+        self.ses = None
+        self.fdr_corr_pvals = []
+
+        # volume-specific variables
+        self.volume_mask = None
+        if isinstance(self.contrasts_img, nib.Nifti1Image):
+            self.num_subjects = self.contrasts_img.shape[-1] // self.num_frames
+            self.out_suffix = ".nii.gz"
+            voxel_sizes = self.contrasts_img.header.get_zooms()[:3]
+            # first check if any template resolution matches
+
+            # TODO: handle cohorts
+            # TODO: write test for making sure cohort-specific spaces
+            for k, v in tflow.get_metadata(self.model_spec.space)["res"].items():
+                if np.allclose(voxel_sizes, v["zooms"]):
+                    self.volume_mask = nib.load(
+                        tflow.get(
+                            self.model_spec.space,
+                            resolution=self.contrasts_img.header.get_zooms()[0],
+                            desc="brain",
+                            suffix="mask",
+                        )
+                    )
+                    break
+            # if not, try to upsample the template with the closest resolution under the target resolution
+            if self.volume_mask is None:
+                self.volume_mask = resample_img(
+                    nib.load(
+                        tflow.get(
+                            self.model_spec.space,
+                            resolution=np.floor(voxel_sizes[0]),
+                            desc="brain",
+                            suffix="mask",
+                        )
+                    ),
+                    target_affine=self.affine,
+                    target_shape=self.fdata.shape[:3],
+                    interpolation="nearest",
+                )
+
+        elif isinstance(self.contrasts_img, nib.Cifti2Image) and hasattr(self.contrasts_img.header.get_axis(1),
+                                                                          'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
+            self.num_subjects = self.contrasts_img.shape[0] // self.num_frames
+            self.out_suffix = ".dscalar.nii"
+            contrasts_img_path = self.model_outdir / "stacked_contrasts.dscalar.nii"
+            nib.save(self.contrasts_img, contrasts_img_path)
+            if config.fwhm > 0:
+                l_surf_path, r_surf_path = get_template_midthickness_paths_from_cifti_header(
+                    self.contrasts_img.header, self.model_spec.space
+                )
+                smoothed_contrasts_img_path = self.model_outdir / "smoothed_stacked_contrasts.dscalar.nii"
+                subprocess.run(shlex.split(
+                    "wb_command -cifti-smoothing "
+                    f"{str(contrasts_img_path.resolve())} {config.fwhm} {config.fwhm} COLUMN {str(smoothed_contrasts_img_path.resolve())} -fwhm "
+                    f"-left-surface {l_surf_path} -right-surface {r_surf_path}"
+                ))
+                self.contrasts_img = nib.load(smoothed_contrasts_img_path)
+                self.fdata = self.contrasts_img.get_fdata()
+
+
+    def fit(self):
+        print(f"Running {self.model_spec}")
+        self._fit()
+        self._save()
+
+    def _fit(self):
+        if isinstance(self.contrasts_img, nib.Cifti2Image):
+            img_shape = (1, self.fdata.shape[1])
+            glm_input_shape = self.fdata.shape
+        elif isinstance(self.contrasts_img, nib.Nifti1Image):
+            img_shape = (*self.fdata.shape[:3], 1)
+            glm_input_shape = (self.fdata.shape[3], math.prod(self.fdata.shape[:3]))
+        else:
+            raise ValueError(f"Cannot fit GLM for image type: {type(self.contrasts_img)}")
+        Y = self.fdata.reshape(glm_input_shape)
+        n, k = self.num_subjects, self.num_frames
+        Y_sep = Y.reshape(n, k, Y.shape[1])
+        grand_mean = Y_sep.mean(axis=(0, 1), keepdims=True)
+        sub_mean = Y_sep.mean(axis=1, keepdims=True)
+        frame_mean = Y_sep.mean(axis=0, keepdims=True)
+        ss_cond = n * np.sum((frame_mean - grand_mean) ** 2, axis=(0, 1))
+        ss_sub = k * np.sum((sub_mean - grand_mean) ** 2, axis=(0, 1))
+        ss_total = np.sum((Y_sep - grand_mean) ** 2, axis=(0, 1))
+        # 4. Error SS with zero-clipping for float32 precision stability
+        ss_error = np.maximum(ss_total - ss_sub - ss_cond, 0.0)
+        df_cond = k - 1
+        df_error = (n - 1) * (k - 1)
+        # Mean squares & F-values
+        ms_cond = ss_cond / df_cond
+        ms_error = ss_error / df_error
+        # Avoid division by zero in zero-variance/masked vertices
+        with np.errstate(divide="ignore", invalid="ignore"):
+            fstat = ms_cond / ms_error
+            fstat = np.nan_to_num(fstat, nan=0.0)
+        # Uncorrected p-values via F survival function
+        pval = stats.f.sf(fstat, df_cond, df_error)
+        # Greeenhouse-Geisser sphericity correction
+        Y_c = Y_sep - Y_sep.mean(axis=0, keepdims=True)
+        # Compute sample covariance matrix S across subjects (ddof=1)
+        # S[i, j, v] is the covariance between condition i and j at vertex v
+        S = np.einsum("sik,sjk->ijk", Y_c, Y_c) / (n - 1)
+        # -------------------------------------------------------------------------
+        # 3. Vectorized Greenhouse-Geisser Epsilon Calculation
+        # -------------------------------------------------------------------------
+        s_diag = np.diagonal(S, axis1=0, axis2=1)  # (V, k)
+        s_mean = np.mean(S, axis=(0, 1))  # (V,)
+        s_row_mean = np.mean(S, axis=1)  # (k, V)
+        num = (k * (np.mean(s_diag, axis=1) - s_mean)) ** 2
+        den = (k - 1) * (
+                np.sum(S ** 2, axis=(0, 1))
+                - 2 * k * np.sum(s_row_mean ** 2, axis=0)
+                + (k ** 2) * (s_mean ** 2)
+        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            eps_gg = num / den
+            # Bound epsilon between theoretical limits [1/(k-1), 1.0]
+            eps_gg = np.clip(eps_gg, 1.0 / (k - 1), 1.0)
+            eps_gg = np.nan_to_num(eps_gg, nan=1.0 / (k - 1))
+        df_cond_adj = eps_gg * df_cond
+        df_error_adj = eps_gg * df_error
+        pval_sphericity_corr = stats.f.sf(fstat, df_cond_adj, df_error_adj)
+        self.fstat = fstat.reshape(img_shape)
+        self.uncorr_pval = pval.reshape(img_shape)
+        self.epsilons = eps_gg.reshape(img_shape)
+        self.pval_sphericity_corr = pval_sphericity_corr.reshape(img_shape)
+
+    def _save(self):
+        if isinstance(self.contrasts_img, nib.Nifti1Image):
+            for datatype, data in (
+                    ("uncorr_pvals", self.uncorr_pvals),
+                    ("fstat", self.fstat),
+                    ("epsilons", self.epsilons),
+                    ("pval_sphericity_corr", self.pval_sphericity_corr),
+            ):
+                if data is None:
+                    continue
+                img = nib.Nifti1Image(data, self.affine, header=self.contrasts_img.header)
+                nib.save(
+                    img,
+                    p := self.model_outdir
+                         / f"{sanitize_filename(self.model_spec.model_name)}_{datatype}.nii.gz",
+                )
+                logger.info(f"Saved {p!s}")
+                del img
+        elif isinstance(self.contrasts_img, nib.Cifti2Image):
+            for datatype, data in (
+                    ("uncorr_pvals", self.uncorr_pval),
+                    ("fstat", self.fstat),
+                    ("epsilons", self.epsilons),
+                    ("pval_sphericity_corr", self.pval_sphericity_corr),
+            ):
+                if data is None:
+                    continue
+                img = nib.cifti2.cifti2.Cifti2Image(
+                    data,
+                    (
+                        nib.cifti2.cifti2_axes.ScalarAxis(name=[datatype]),
+                        self.contrasts_img.header.get_axis(1),
+                    ),
+                )
+                nib.save(
+                    img,
+                    p := self.model_outdir
+                         / f"{sanitize_filename(self.model_spec.model_name)}_{datatype}.dscalar.nii",
+                )
+                logger.info(f"Saved {p!s}")
+                del img

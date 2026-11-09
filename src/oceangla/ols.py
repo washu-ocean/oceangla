@@ -18,6 +18,7 @@ from scipy import stats
 from templateflow import api as tflow
 from patsy import dmatrix
 from tqdm import tqdm
+from joblib import Parallel, delayed
 
 # from .model import GroupLevelModel
 from oceangla.config import config
@@ -35,8 +36,7 @@ from .volume_utils import (
     get_biggest_voxel_cluster_sizes,
     get_voxel_clusters,
 )
-from .model import ModelDesc
-
+from .model import ModelSpec
 logger = logging.getLogger(__name__)
 
 
@@ -58,17 +58,17 @@ def save_null_histogram(
 
 
 def run_ols_model(
-    model_desc: ModelDesc,
+    model_spec: ModelSpec,
     firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
     get_img_cached = config.joblib_memory.cache(__get_contrasts_img)
-    contrasts_img = get_img_cached(model_desc, firstlevel_contrasts_df)
-    design_df = __get_design_df(model_desc, subject_variables_df)
+    contrasts_img = get_img_cached(model_spec, firstlevel_contrasts_df)
+    design_df = __get_design_df(model_spec, subject_variables_df)
     OLSModel(
         contrasts_img,
         design_df,
-        model_desc,
+        model_spec,
         perms=config.perms,
         alpha=config.alphas,
         volume_cluster_strategy=config.volume_cluster_strategy,
@@ -78,21 +78,21 @@ def run_ols_model(
     ).fit()
 
 def __get_contrasts_img(
-    model_desc: ModelDesc,
+    model_spec: ModelSpec,
     firstlevel_contrasts_df: pd.DataFrame,
 ):
     scalars, conditions = (
-        [1 if c[0] == "+" else -1 for c in model_desc["firstlevel_contrasts"]],
-        [c[1:] for c in model_desc["firstlevel_contrasts"]]
+        [c.scalar for c in model_spec.firstlevel_contrasts],
+        [c.name for c in model_spec.firstlevel_contrasts]
     )
     print(conditions)
     if len(scalars) > 1:  # Make sure we're scaling these in the right order after sorting the dataframe by subject/condition
         sorted_pairs = sorted(zip(scalars, conditions), key=lambda tup : tup[1])
         scalars, conditions = map(list, zip(*sorted_pairs))
     space, task, session = (
-        model_desc["space"],
-        model_desc["task"],
-        model_desc["session"],
+        model_spec.space,
+        model_spec.task,
+        model_spec.session,
     )
     if len(conditions) > 1:  # compute a contrast for each subject, then concatenate
         paths = (
@@ -197,10 +197,10 @@ def __get_contrasts_img(
         
 
 def __get_design_df(
-    model_desc: ModelDesc,
+    model_spec: ModelSpec,
     subject_variables_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    design_df = dmatrix(model_desc["subject_variables"], subject_variables_df, return_type="dataframe")
+    design_df = dmatrix(model_spec.subject_variables, subject_variables_df, return_type="dataframe")
     design_df["subject"] = subject_variables_df["subject"]
     design_df = (
         design_df
@@ -216,7 +216,7 @@ class OLSModel:
         self,
         contrasts_img: nib.Cifti2Image | nib.Nifti1Image,
         design_df: pd.DataFrame,
-        model_desc: ModelDesc,
+        model_spec: ModelSpec,
         perms: int = 0,
         alpha: float | list[float] = 0.05,
         l_area_path: Path | None = None,
@@ -231,8 +231,8 @@ class OLSModel:
         self.fdata = contrasts_img.get_fdata()
         self.design_df = design_df
         self.value_names = list(design_df.columns)
-        self.model_desc = model_desc
-        self.model_outdir = config.outdir_path / sanitize_filename(self.model_desc["model_name"])
+        self.model_spec = model_spec
+        self.model_outdir = config.outdir_path / sanitize_filename(self.model_spec.model_name)
         if not self.model_outdir.is_dir():
             self.model_outdir.mkdir(parents=True, exist_ok=True)
         self.perms = perms
@@ -267,11 +267,11 @@ class OLSModel:
             # TODO: handle cohorts
             # TODO: write test for making sure cohort-specific spaces
             # work
-            for k, v in tflow.get_metadata(self.model_desc["space"])["res"].items():
+            for k, v in tflow.get_metadata(self.model_spec.space)["res"].items():
                 if np.allclose(self.contrasts_img.header.get_zooms()[:3], v["zooms"]):
                     self.volume_mask = nib.load(
                         tflow.get(
-                            self.model_desc["space"],
+                            self.model_spec.space,
                             resolution=self.contrasts_img.header.get_zooms()[0],
                             desc="brain",
                             suffix="mask",
@@ -283,7 +283,7 @@ class OLSModel:
                 self.volume_mask = resample_img(
                     nib.load(
                         tflow.get(
-                            self.model_desc["space"],
+                            self.model_spec.space,
                             resolution=np.floor(self.contrasts_img.header.get_zooms()[0]),
                             desc="brain",
                             suffix="mask",
@@ -300,7 +300,7 @@ class OLSModel:
         if isinstance(self.contrasts_img, nib.Cifti2Image) and hasattr(self.contrasts_img.header.get_axis(1), 'vertex'):  # if doesn't have 'vertex' attr, then it has a ParcelAxis
             self.out_suffix = ".dscalar.nii"
             l_surf_img, r_surf_img = get_template_midthicknesses_from_cifti_header(
-                self.contrasts_img.header, self.model_desc["space"]
+                self.contrasts_img.header, self.model_spec.space
             )
             self.l_faces, self.r_faces = (
                 l_surf_img.darrays[1].data,
@@ -324,9 +324,9 @@ class OLSModel:
     def fit(self):
         if self.perms > 0:
             for perm in range(self.perms):
-                print(f"Running permutation {perm + 1} of {self.model_desc}")
+                print(f"Running permutation {perm + 1} of {self.model_spec}")
                 self._fit(permuted_design_matrix=self.__get_permuted_design_matrix())
-        print(f"Running {self.model_desc}")
+        print(f"Running {self.model_spec}")
         self._fit()
         self._save()
         if self.perms > 0:
@@ -349,7 +349,6 @@ class OLSModel:
         else:
             raise ValueError(f"Cannot fit GLM for image type: {type(self.contrasts_img)}")
         n, p = design_matrix_arr.shape
-        breakpoint()
         beta, ssr, rank, s = np.linalg.lstsq(
             design_matrix_arr,
             self.fdata.reshape(glm_input_shape),
@@ -465,7 +464,7 @@ class OLSModel:
             nib.save(
                 fdr_corr_pvals_cifti,
                 p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc['model_name'])}_fdr_corr_{self.dlabel_path_to_id[dlabel_path]}{self.out_suffix}",
+                / f"{sanitize_filename(self.model_spec.model_name)}_fdr_corr_{self.dlabel_path_to_id[dlabel_path]}{self.out_suffix}",
             )
             logger.info(f"Saved {p!s}")
         else:
@@ -495,7 +494,7 @@ class OLSModel:
             nib.save(
                 fdr_corr_pvals_cifti,
                 p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc['model_name'])}_fdr_corr{self.out_suffix}",
+                / f"{sanitize_filename(self.model_spec.model_name)}_fdr_corr{self.out_suffix}",
             )
             logger.info(f"Saved {p!s}")
 
@@ -506,7 +505,7 @@ class OLSModel:
                 flattened_pvals = self.uncorr_pvals[..., value_idx].flatten()
                 fdr_corr = fdr_correct(flattened_pvals, alpha=alpha).reshape(orig_shape)
                 fdr_corr_img = nib.Nifti1Image(fdr_corr, self.affine, header=self.contrasts_img.header)
-                nib.save(fdr_corr_img, p := self.model_outdir / f"{sanitize_filename(self.model_desc['model_name'])}_beta-{value_name}_fdr_corr_{alpha:.4f}.nii.gz")
+                nib.save(fdr_corr_img, p := self.model_outdir / f"{sanitize_filename(self.model_spec.model_name)}_beta-{value_name}_fdr_corr_{alpha:.4f}.nii.gz")
                 logger.info(f"Saved {p!s}")
 
     def _cluster_correct(self):
@@ -639,7 +638,7 @@ class OLSModel:
         nib.save(
             clus_corr_pvals_cifti,
             p := self.model_outdir
-            / f"{sanitize_filename(self.model_desc['model_name'])}_clus_corr{self.out_suffix}",
+            / f"{sanitize_filename(self.model_spec.model_name)}_clus_corr{self.out_suffix}",
         )
         logger.info(f"Saved {p!s}")
 
@@ -663,7 +662,7 @@ class OLSModel:
                     clus_p = sizes_larger_than_this_cluster / (len(cluster_null_dist) + 1)
                     clus_corr[tuple(cluster.T)] = clus_p
                 clus_corr_img = nib.Nifti1Image(clus_corr, self.affine, header=self.contrasts_img.header)
-                nib.save(clus_corr_img, p := self.model_outdir / f"{sanitize_filename(self.model_desc['model_name'])}_beta-{value_name}_clus_corr_{alpha:.4f}.nii.gz")
+                nib.save(clus_corr_img, p := self.model_outdir / f"{sanitize_filename(self.model_spec.model_name)}_beta-{value_name}_clus_corr_{alpha:.4f}.nii.gz")
                 logger.info(f"Saved {p!s}")
 
     def _save(self):
@@ -692,7 +691,7 @@ class OLSModel:
             nib.save(
                 img,
                 p := self.model_outdir
-                / f"{sanitize_filename(self.model_desc['model_name'])}_{datatype}{self.out_suffix}",
+                / f"{sanitize_filename(self.model_spec.model_name)}_{datatype}{self.out_suffix}",
             )
             logger.info(f"Saved {p!s}")
             del img
@@ -713,7 +712,7 @@ class OLSModel:
                 nib.save(
                     img,
                     p := self.model_outdir
-                    / f"{sanitize_filename(self.model_desc['model_name'])}_beta-{value_name}_{datatype}.nii.gz",
+                    / f"{sanitize_filename(self.model_spec.model_name)}_beta-{value_name}_{datatype}.nii.gz",
                 )
                 logger.info(f"Saved {p!s}")
                 del img

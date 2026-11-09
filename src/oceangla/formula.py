@@ -5,11 +5,12 @@ from collections import namedtuple
 from enum import Enum, auto
 from pathlib import Path
 from textwrap import dedent
-from typing import Sequence
+from typing import Sequence, List
 
 from pathvalidate import sanitize_filename
 
-from .model import ModelDesc
+from .model import ModelSpec, FirstLevelContrast
+from .ols import OLSModel
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +90,12 @@ class UnexpectedTokenError(Exception):
             super().__init__(f"Unexpected token: {received_token!r}. Expected one of {expected_token_type!r}")
 
 
-def eval_scalar(name: str) -> str:
+def eval_scalar(name: str) -> int:
     minuses = 0
     for i in range(len(name)):
         if name[i] == "-":
             minuses += 1
-    return "+" if minuses % 2 == 0 else "-"
+    return 1 if minuses % 2 == 0 else -1
 
 
 class FormulaParser:
@@ -115,7 +116,7 @@ class FormulaParser:
             )
         self.token_stream = deepcopy(self.tokens)
         if parse:
-            self.model_desc: ModelDesc = self.parse()
+            self.model_spec: ModelSpec = self.parse()
 
     # May get around to reimplementing this with the new syntax
     #
@@ -148,28 +149,28 @@ class FormulaParser:
         self.pos += 1
         return token
 
-    def parse(self) -> ModelDesc:
+    def parse(self) -> ModelSpec:
         return self.statement()
         # firstlevel_contrasts = self.firstlevel_contrasts()
         # subject_variables = self.subject_variables()
         # return (firstlevel_contrasts, subject_variables)
 
-    def statement(self) -> ModelDesc:
+    def statement(self) -> ModelSpec:
         if len(list(filter(lambda t: t.type == TokenType.TILDE, self.tokens))) == 1:
             return self.expression()
         else:
             return self.function()
 
-    def function(self) -> ModelDesc:
+    def function(self) -> ModelSpec:
         self.expect(TokenType.VAR)
         funcname=self.consume().value
         self.expect(TokenType.LPAREN, consume=True)
         arglist=self.arglist()
         self.expect(TokenType.RPAREN, consume=True)
-        return {
-            "model_type": funcname,
-            "function_args": arglist
-        }
+        return ModelSpec(
+            model_type=funcname,
+            function_args=arglist
+        )
 
     def arglist(self) -> list[str]:
         arglist=[]
@@ -181,34 +182,33 @@ class FormulaParser:
             arglist.append(self.consume().value)
         return arglist
 
-    def expression(self) -> ModelDesc:
+    def expression(self) -> ModelSpec:
         firstlevel_contrasts=self.firstlevel_contrasts()
         subject_variables=self.subject_variables()
-        return {
-            "model_type": "OLS",
-            "firstlevel_contrasts": firstlevel_contrasts,
-            "subject_variables": subject_variables
-        }
+        return ModelSpec(
+            model_type="OLS",
+            firstlevel_contrasts=firstlevel_contrasts,
+            subject_variables=subject_variables
+        )
 
-    def firstlevel_contrasts(self) -> list[str]:
-        firstlevel_contrasts_names=[]
-        firstlevel_contrasts_names.append(self.firstlevel_contrasts_name())
+    def firstlevel_contrasts(self) -> List[FirstLevelContrast]:
+        firstlevel_contrasts = [self.firstlevel_contrasts_name()]
         while self.peek().type != TokenType.TILDE:
-            firstlevel_contrasts_names.append(self.firstlevel_contrasts_name())
+            firstlevel_contrasts.append(self.firstlevel_contrasts_name())
         self.consume()
-        return firstlevel_contrasts_names
+        return firstlevel_contrasts
 
-    def firstlevel_contrasts_name(self) -> str:
+    def firstlevel_contrasts_name(self) -> FirstLevelContrast:
         name=""
 
         while self.peek().type in (TokenType.PLUS, TokenType.MINUS):
             name += self.consume().value
 
-        name="+" if name == "" else eval_scalar(name)  # add scalar if one not present
+        scalar = 1 if name == "" else eval_scalar(name)
 
         self.expect(TokenType.VAR)
-        name += self.consume().value
-        return name
+        name = self.consume().value
+        return FirstLevelContrast(name=name, scalar=scalar)
 
     def subject_variables(self) -> str:
         return self.string.split('~')[-1] # this is handled by patsy now
