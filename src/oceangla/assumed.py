@@ -77,7 +77,7 @@ def run_ols_model(
         separate_null_by_parameter=config.separate_null_by_parameter,
     ).fit()
 
-def __get_contrasts_img(
+def get_contrasts_img(
     model_spec: ModelSpec,
     firstlevel_contrasts_df: pd.DataFrame,
 ):
