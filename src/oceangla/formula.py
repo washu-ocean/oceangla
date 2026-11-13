@@ -10,7 +10,7 @@ from typing import Sequence, List
 from pathvalidate import sanitize_filename
 
 from .model import ModelSpec, FirstLevelContrast
-from .ols import OLSModel
+from .assumed import OLSModel
 
 logger = logging.getLogger(__name__)
 

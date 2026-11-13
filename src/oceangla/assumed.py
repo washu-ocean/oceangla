@@ -62,7 +62,7 @@ def run_ols_model(
     firstlevel_contrasts_df: pd.DataFrame,
     subject_variables_df: pd.DataFrame
 ):
-    get_img_cached = config.joblib_memory.cache(__get_contrasts_img)
+    get_img_cached = config.joblib_memory.cache(get_assumed_contrasts_img)
     contrasts_img = get_img_cached(model_spec, firstlevel_contrasts_df)
     design_df = __get_design_df(model_spec, subject_variables_df)
     OLSModel(
@@ -77,7 +77,7 @@ def run_ols_model(
         separate_null_by_parameter=config.separate_null_by_parameter,
     ).fit()
 
-def get_contrasts_img(
+def get_assumed_contrasts_img(
     model_spec: ModelSpec,
     firstlevel_contrasts_df: pd.DataFrame,
 ):
@@ -196,7 +196,7 @@ def get_contrasts_img(
             raise ValueError(f"Unexpected image type {type(img0)} (this shouldn't happen)")
         
 
-def __get_design_df(
+def get_design_df(
     model_spec: ModelSpec,
     subject_variables_df: pd.DataFrame,
 ) -> pd.DataFrame:

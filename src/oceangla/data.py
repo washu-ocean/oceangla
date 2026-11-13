@@ -31,6 +31,7 @@ def collect_models_and_dataframes() -> tuple[list[ModelSpec], pd.DataFrame, pd.D
         config.fladir_paths,
         reindex=config.reindex
     )
+    assert config.firstlevel_contrasts_path is not None
     firstlevel_contrasts_df = pd.read_csv(
         config.firstlevel_contrasts_path,
         sep="\t",
