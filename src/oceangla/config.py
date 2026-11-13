@@ -31,6 +31,13 @@ class config:  # All attributes are set in parser.py parse_args()
     version: str | None = None
     verbose: int = 0
     volume_cluster_strategy: str = "NN1"
+    tfce: bool = False
+    tfce_h: float = 2.0
+    tfce_e: float = 0.5
+    tfce_dh: float | None = None
+    fdr: bool = True
+    cluster_correct: bool = True
+    use_gpu: bool | None = None
 
     # Store joblib memory cache
     joblib_memory_path: Path | str | None = None
