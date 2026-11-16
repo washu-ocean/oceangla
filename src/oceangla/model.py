@@ -2016,7 +2016,7 @@ def get_assumed_factorial_anova_contrasts_img_and_design_df(
             ),
             nifti_header = img0.nifti_header
         )
-        return (stacked_img, design_df)
+        return stacked_img, design_df
     elif isinstance(img0, nib.Cifti2Image):
         fdata_stacked = np.empty((*img0.shape[:3], len(img_paths)), dtype=np.float32)
         for i in tqdm(range(len(img_paths)), desc="Stacking contrast maps..."):
@@ -2026,7 +2026,52 @@ def get_assumed_factorial_anova_contrasts_img_and_design_df(
             affine=img0.affine,
             header=img0.header
         )
-        return (stacked_img, design_df)
+        return stacked_img, design_df
+
+
+class FactorialAnovaModelResults(ModelResults):
+    def __init__(
+        self,
+        model: Model,
+        uncorr_pvals: np.ndarray,
+        fstats: np.ndarray
+    ):
+        super().__init__(model, uncorr_pvals)
+        self.fstats = fstats
+
+    def _get_stat_map(self) -> np.ndarray:
+        return self.fstats
+
+    def save(self, outdir: Path | str | None = None) -> None:
+        target_dir = Path(outdir) if outdir is not None else self.model.model_outdir
+        if isinstance(self.model.contrasts_img, nib.Nifti1Image):
+            for datatype, data in (
+                ("uncorr_pvals", self.uncorr_pvals),
+                ("fstat", self.fstats),
+            ):
+                if data is None:
+                    continue
+                img = nib.Nifti1Image(data, self.model.affine, header=self.model.contrasts_img.header)
+                p = target_dir / f"{sanitize_filename(self.model.model_spec.model_name)}_{datatype}.nii.gz"
+                nib.save(img, p)
+                logger.info(f"Saved {p!s}")
+        elif isinstance(self.model.contrasts_img, nib.Cifti2Image):
+            for datatype, data in (
+                ("uncorr_pvals", self.uncorr_pvals),
+                ("fstat", self.fstats),
+            ):
+                if data is None:
+                    continue
+                img = nib.cifti2.cifti2.Cifti2Image(
+                    data,
+                    (
+                        nib.cifti2.cifti2_axes.ScalarAxis(name=[datatype]),
+                        self.model.contrasts_img.header.get_axis(1),
+                    ),
+                )
+                p = target_dir / f"{sanitize_filename(self.model.model_spec.model_name)}_{datatype}{self.model.out_suffix}"
+                nib.save(img, p)
+                logger.info(f"Saved {p!s}")
 
 
 class FactorialAnovaModel(Model):
@@ -2037,14 +2082,96 @@ class FactorialAnovaModel(Model):
         subject_variables_df: pd.DataFrame,
         **kwargs
     ):
+        self.xp = get_xp()
         self.model_spec = model_spec
         self.firstlevel_contrasts_df = firstlevel_contrasts_df
         self.subject_variables_df = subject_variables_df
         self._setup_outdir()
 
-        get_img_fn = get_assumed_factorial_anova_img_and_design_df
+        get_img_fn = get_assumed_factorial_anova_contrasts_img_and_design_df
+        if config.joblib_memory is not None:
+            get_img_fn = config.joblib_memory.cache(get_assumed_factorial_anova_contrasts_img_and_design_df)
+        self.contrasts_img, self.design_df = get_img_fn(self.model_spec, self.firstlevel_contrasts_df)
+        self.fdata = self.contrasts_img.get_fdata()
+
+        # Setup geometry
+        l_area_path = kwargs.get("l_area_path", None)
+        r_area_path = kwargs.get("r_area_path", None)
+        self._setup_image_geometry(l_area_path=l_area_path, r_area_path=r_area_path)
+
+        # Options for null separation & dlabel
+        self.separate_null_by_hemisphere = kwargs.get(
+            "separate_null_by_hemisphere", getattr(config, "separate_null_by_hemisphere", False)
+        )
+        self.separate_null_by_parameter = kwargs.get(
+            "separate_null_by_parameter", getattr(config, "separate_null_by_parameter", False)
+        )
+        dlabel_paths = kwargs.get("dlabel_paths", getattr(config, "dlabel_paths", None))
+        if dlabel_paths is not None:
+            self.dlabel_paths = [str(p.resolve()) for p in dlabel_paths]
+            self.dlabel_path_to_id = OrderedDict()
+            for i, path in enumerate(self.dlabel_paths):
+                self.dlabel_path_to_id[path] = f"network{i + 1}"
+            with open(self.model_outdir / "network_mappings.json", "w") as f:
+                json.dump(self.dlabel_path_to_id, f, indent=4)
+                logger.info(f"Wrote {(self.model_outdir / 'network_mappings.json').resolve()!s}")
 
 
+    def fit(self, *args, **kwargs) -> FactorialAnovaModelResults:
+        design_matrix_arr = self.design_df.to_numpy()
+        if isinstance(self.contrasts_img, nib.Cifti2Image):
+            img_shape = (design_matrix_arr.shape[1], self.fdata.shape[1])
+            glm_input_shape = self.fdata.shape
+        elif isinstance(self.contrasts_img, nib.Nifti1Image):
+            img_shape = (*self.fdata.shape[:3], design_matrix_arr.shape[1])
+            glm_input_shape = (self.fdata.shape[3], math.prod(self.fdata.shape[:3]))
+        else:
+            raise ValueError(f"Cannot fit GLM for image type: {type(self.contrasts_img)}")
+        n, p = design_matrix_arr.shape
+        X = self.xp.asarray(design_matrix_arr)
+        Y = self.xp.asarray(self.fdata.reshape(glm_input_shape))
+        rank = int(self.xp.linalg.matrix_rank(X))
+        dfd = n - rank
+        if dfd <= 0:
+            raise ValueError(f"Non-positive residual degrees of freedom (N={n}, rank={rank}).")
+        beta, _, _, _ = np.linalg.lstsq(X, Y, rcond=None)
+        residuals = Y - X @ beta
+        rss = np.sum(residuals ** 2, axis=0)
+        mse = rss / dfd  # Shape: (V,)
+        xtx_inv = self.xp.linalg.pinv(X.T @ X)
 
-class FactorialAnovaModelResults(ModelResults):
-    pass
+        f_stats = np.empty(Y.shape, dtype=np.float32)
+        f_stats[0, :] = 0
+        p_values = np.empty(Y.shape, dtype=np.float32)
+        p_values[0, :] = 1
+        for col_slice in glm_input_shape[0][1:]:  # 1: excludes grand mean
+            b_sub = beta[col_slice]
+            cov_sub = xtx_inv[col_slice, col_slice]
+            dfn = b_sub.shape[0]
+            ss_term = self.xp.sum(b_sub * (self.xp.linalg.pinv(cov_sub @ b_sub)), axis=0)
+            f_stat = np.zeros_like(ss_term, dtype=np.float32)
+            valid = mse > 0
+            f_stat[valid] = (ss_term[valid] / dfn) / mse[valid]
+            f_stat_cpu = to_cpu(f_stat)
+            f_stats[col_slice, :] = f_stat_cpu
+            p_value = stats.f.sf(f_stat_cpu, dfn=dfn, dfd=dfd)
+            p_values[col_slice, :] = p_value
+
+        return FactorialAnovaModelResults(
+            model=self,
+            uncorr_pvals=p_values.reshape(img_shape),
+            fstats=f_stats.reshape(img_shape)
+        )
+
+    def get_permuted_design_matrix(self) -> Any:
+        """Return a permuted design matrix (or permuted condition labels)."""
+        pass
+
+    def fit_permuted(self, permuted_design_matrix: Any) -> np.ndarray:
+        """Fit the model with a permuted design matrix and return p-values."""
+        pass
+
+    def fit_permuted_stat(self, permuted_design_matrix: Any) -> np.ndarray:
+        """Fit the model with a permuted design matrix and return test statistics."""
+        pass
+
