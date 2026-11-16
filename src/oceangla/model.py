@@ -2172,7 +2172,7 @@ class FactorialAnovaModel(Model):
         term_indices = get_term_column_indices(self.design_df)
         term_names = [
             re.sub(r'C\(', '',
-                re.sub(r' Sum\)', '',
+                re.sub(r', Sum\)', '',
                     re.sub(r'\[[^\]]*\]', '', term_name)
                 )
             )
