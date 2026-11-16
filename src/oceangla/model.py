@@ -2173,7 +2173,7 @@ class FactorialAnovaModel(Model):
         term_names = [
             re.sub(r'C\(', '',
                 re.sub(r' Sum\)', '',
-                    re.sub(r'\[[^\]]\]', '', term_name)
+                    re.sub(r'\[[^\]]*\]', '', term_name)
                 )
             )
             for term_name in self.design_df.columns
