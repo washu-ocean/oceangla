@@ -2051,6 +2051,10 @@ class FactorialAnovaModelResults(ModelResults):
         self.fstats = fstats
         self.term_names = term_names
 
+    @property
+    def stat_names(self) -> list[str]:
+        return self.term_names
+
     def _get_stat_map(self) -> np.ndarray:
         return self.fstats
 
