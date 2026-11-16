@@ -194,6 +194,8 @@ def get_biggest_voxel_cluster_sizes(clusters: list[np.ndarray[np.int64]] | list[
     np.int64
         Size, in voxels, of the largest cluster.
     """
+    if len(clusters) == 0:
+        return np.int64(0)
     return np.max([cluster.shape[0] for cluster in clusters]).astype(np.int64)
 
 

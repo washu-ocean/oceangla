@@ -303,14 +303,91 @@ def _get_parser():
         dest="just_build_db",
         help="Build the database, then exit."
     )
+    # TFCE flags
+    parser.add_argument(
+        "--tfce",
+        action="store_true",
+        dest="tfce",
+        default=False,
+        help="Perform Threshold-Free Cluster Enhancement (TFCE) correction via permutations."
+    )
+    parser.add_argument(
+        "--tfce-h", "--tfce_h",
+        type=_pos_float,
+        dest="tfce_h",
+        default=2.0,
+        help="Height exponent (H) for TFCE score integration. Default is 2.0."
+    )
+    parser.add_argument(
+        "--tfce-e", "--tfce_e",
+        type=_pos_float,
+        dest="tfce_e",
+        default=0.5,
+        help="Extent exponent (E) for TFCE score integration. Default is 0.5."
+    )
+    parser.add_argument(
+        "--tfce-dh", "--tfce_dh",
+        type=_pos_float,
+        dest="tfce_dh",
+        default=None,
+        help="Step size (dh) for TFCE score integration. Defaults to max(|stat|) / 100."
+    )
+    # FDR toggle
+    fdr_group = parser.add_mutually_exclusive_group()
+    fdr_group.add_argument(
+        "--fdr",
+        dest="fdr",
+        action="store_true",
+        default=True,
+        help="Perform False Discovery Rate (FDR) correction (default: True)."
+    )
+    fdr_group.add_argument(
+        "--no-fdr", "--no_fdr",
+        dest="fdr",
+        action="store_false",
+        help="Disable False Discovery Rate (FDR) correction."
+    )
+    # Cluster correction toggle
+    clus_group = parser.add_mutually_exclusive_group()
+    clus_group.add_argument(
+        "--cluster-correct", "--cluster_correct",
+        dest="cluster_correct",
+        action="store_true",
+        default=True,
+        help="Perform thresholded cluster correction when --perms > 0 (default: True)."
+    )
+    clus_group.add_argument(
+        "--no-cluster-correct", "--no_cluster_correct",
+        dest="cluster_correct",
+        action="store_false",
+        help="Disable thresholded cluster correction."
+    )
+    # GPU acceleration toggle
+    gpu_group = parser.add_mutually_exclusive_group()
+    gpu_group.add_argument(
+        "--gpu",
+        dest="use_gpu",
+        action="store_true",
+        default=None,
+        help="Use GPU acceleration with CuPy (auto-detected by default if GPU is present)."
+    )
+    gpu_group.add_argument(
+        "--no-gpu", "--no_gpu",
+        dest="use_gpu",
+        action="store_false",
+        help="Disable GPU acceleration with CuPy."
+    )
     return parser
 
 
-def parse_args(parsed_args = None):
+get_parser = _get_parser
+
+
+def parse_args(parsed_args=None, args=None):
     from .config import config
     if parsed_args is None:
         parser = _get_parser()
-        parsed_args = parser.parse_args()
+        parsed_args = parser.parse_args(args=args)
         
     if parsed_args.config is not None:
         toml_data = loads(parsed_args.config.read_text())
