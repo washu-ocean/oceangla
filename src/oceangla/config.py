@@ -5,8 +5,10 @@ from joblib import Memory
 
 class config:  # All attributes are set in parser.py parse_args()
     alphas: list[float] = [0.05]
+    anova_groups: dict[str, list[str]] = {}
     firstlevel_contrasts: list[str] | None = None
     dlabel_paths: list[Path] | None = None
+    dry_run: bool = False
     fladir_paths: list[Path] | None = None
     fwhm: int = 0
     subject_variables: list[str] | None = None

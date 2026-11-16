@@ -19,6 +19,8 @@ from oceangla.model import (
     TwoWayAnovaModelResults,
     RMAnovaModelResults,
     AnovaModelResults,
+    FactorialAnovaModel,
+    FactorialAnovaModelResults
 )
 
 
@@ -27,6 +29,7 @@ def test_model_abc_inheritance():
     assert issubclass(OLSModel, Model)
     assert issubclass(TwoWayAnovaModel, Model)
     assert issubclass(RMAnovaModel, Model)
+    assert issubclass(FactorialAnovaModel, Model)
 
 
 def test_model_results_inheritance():
@@ -34,12 +37,13 @@ def test_model_results_inheritance():
     assert issubclass(OLSModelResults, ModelResults)
     assert issubclass(TwoWayAnovaModelResults, ModelResults)
     assert issubclass(RMAnovaModelResults, ModelResults)
+    assert issubclass(FactorialAnovaModelResults, ModelResults)
     assert issubclass(AnovaModelResults, ModelResults)
 
 
 def test_model_constructor_signature():
     """Verify constructor signature takes (model_spec, firstlevel_contrasts_df, subject_variables_df)."""
-    for cls in (OLSModel, TwoWayAnovaModel, RMAnovaModel):
+    for cls in (OLSModel, TwoWayAnovaModel, RMAnovaModel, FactorialAnovaModel):
         sig = inspect.signature(cls.__init__)
         params = list(sig.parameters.keys())
         # First parameter is self

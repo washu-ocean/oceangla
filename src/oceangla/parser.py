@@ -1,6 +1,6 @@
 import json
 import logging
-from argparse import ArgumentParser, ArgumentTypeError, RawTextHelpFormatter
+from argparse import Action, ArgumentParser, ArgumentTypeError, RawTextHelpFormatter
 from pathlib import Path
 from textwrap import dedent
 
@@ -13,6 +13,23 @@ from ._version import __version__
 MODEL_CHOICES = ("ols",)
 
 logger = logging.getLogger(__name__)
+
+class AnovaGroupAction(Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if len(values) < 3:
+            parser.error(
+                f"argument {option_string}: expected at least 3 arguments "
+                f"(GROUP_NAME MEMBER1 MEMBER2 ...), got {len(values)}"
+            )
+
+            # Initialize the dictionary on the namespace if it doesn't exist yet
+        groups = getattr(namespace, self.dest, None)
+        if groups is None:
+            groups = {}
+            setattr(namespace, self.dest, groups)
+
+        group_name, *members = values
+        groups[group_name] = members
 
 
 def _pos_int_or_zero(value):
@@ -205,6 +222,23 @@ def _get_parser():
         "'subject' (program will throw an error if this is not true).",
     )
     parser.add_argument(
+        "--anova_group", "--anova-group",
+        dest="anova_groups",
+        nargs="+",
+        action=AnovaGroupAction,
+        default={},
+        metavar=("GROUP_NAME", "GROUP_MEMBER"),
+        help="Specifies an ANOVA group. Defined as a group name, followed by at least two group members. "
+        "For example: `--anova-group groupA condA1 condA2` puts all conditions from first-level analysis "
+        "titled 'condA1' and 'condA2' into a group called 'groupA'."
+    )
+    parser.add_argument(
+        "--dry_run", "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="Parse arguments, print them, then kill the program."
+    )
+    parser.add_argument(
         "--cluster_strategy", "--cluster-strategy",
         dest="volume_cluster_strategy",
         choices=["NN1", "NN2", "NN3"],
@@ -388,7 +422,11 @@ def parse_args(parsed_args=None, args=None):
     if parsed_args is None:
         parser = _get_parser()
         parsed_args = parser.parse_args(args=args)
-        
+
+    if parsed_args.dry_run:
+        from pprint import pprint
+        pprint(parsed_args.__dict__)
+        exit(0)
     if parsed_args.config is not None:
         toml_data = loads(parsed_args.config.read_text())
         for k, v in toml_data["config"].items():
