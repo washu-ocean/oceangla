@@ -2000,8 +2000,8 @@ def get_assumed_factorial_anova_contrasts_img_and_design_df(
     ].reset_index(drop=True)
     subs_not_included = sorted(set(result_df["subject"]) - set(result_df_["subject"]))
     if len(subs_not_included) > 0:
-        logger.warning("Some subjects missing one or more conditions weren't included in the analyses. These include: "
-                       f"{', '.join(subs_not_included)}")
+        logger.warning(f"Only {len(set(result_df_['subject']))} out of {len(set(result_df['subject']))} subjects included. "
+        f"due to incomplete data. These include: {', '.join(subs_not_included)}")
     result_df = result_df_.copy()
     del result_df_
     design_df = dmatrix(
