@@ -2044,10 +2044,12 @@ class FactorialAnovaModelResults(ModelResults):
         self,
         model: Model,
         uncorr_pvals: np.ndarray,
-        fstats: np.ndarray
+        fstats: np.ndarray,
+        term_names: list[str]
     ):
         super().__init__(model, uncorr_pvals)
         self.fstats = fstats
+        self.term_names = term_names
 
     def _get_stat_map(self) -> np.ndarray:
         return self.fstats
@@ -2075,13 +2077,26 @@ class FactorialAnovaModelResults(ModelResults):
                 img = nib.cifti2.cifti2.Cifti2Image(
                     data,
                     (
-                        nib.cifti2.cifti2_axes.ScalarAxis(name=[datatype]),
+                        nib.cifti2.cifti2_axes.ScalarAxis(name=term_names),
                         self.model.contrasts_img.header.get_axis(1),
                     ),
                 )
                 p = target_dir / f"{sanitize_filename(self.model.model_spec.model_name)}_{datatype}{self.model.out_suffix}"
                 nib.save(img, p)
                 logger.info(f"Saved {p!s}")
+
+
+def get_term_column_indices(dmat: pd.DataFrame) -> dict[str, list[int]]:
+    """Map each ANOVA term name to its list of integer column indices in `dmat`."""
+    term_indices: dict[str, list[int]] = defaultdict(list)
+
+    for col_idx, col_name in enumerate(dmat.columns):
+        # Strip Patsy level brackets like [S.Level1] or [T.Level1] from each factor in the term
+        # e.g. "C(group, Sum)[S.A]:C(cond, Sum)[S.1]" -> "C(group, Sum):C(cond, Sum)"
+        term_name = re.sub(r"\[[^\]]+\]", "", str(col_name))
+        term_indices[term_name].append(col_idx)
+
+    return dict(term_indices)
 
 
 class FactorialAnovaModel(Model):
@@ -2150,29 +2165,33 @@ class FactorialAnovaModel(Model):
         mse = rss / dfd  # Shape: (V,)
         xtx_inv = self.xp.linalg.pinv(X.T @ X)
 
-        f_stats = np.empty(Y.shape, dtype=np.float32)
+        term_indices = get_term_column_indices(self.design_df)
+        term_names = self.design_df.columns
+        f_stats = np.empty((len(term_names), Y.shape[1]), dtype=np.float32)
         f_stats[0, :] = 0
-        p_values = np.empty(Y.shape, dtype=np.float32)
+        p_values = np.empty((len(term_names), Y.shape[1]), dtype=np.float32)
         p_values[0, :] = 1
-        for col_slice in range(glm_input_shape[0]):
-            if col_slice == 0:
+        for term_idx, (term, idx) in enumerate(term_indices.items()):
+            if term == "Intercept":
                 continue
-            b_sub = beta[col_slice]
-            cov_sub = xtx_inv[col_slice, col_slice]
-            dfn = b_sub.shape[0]
+            idx_arr = self.xp.asarray(idx, dtype=int)
+            b_sub = beta[idx_arr, :]
+            cov_sub = xtx_inv[self.xp.ix_(idx_arr, idx_arr)]
+            dfn = len(idx_arr)
             ss_term = self.xp.sum(b_sub * (self.xp.linalg.pinv(cov_sub) @ b_sub), axis=0)
-            f_stat = np.zeros_like(ss_term, dtype=np.float32)
+            f_stat = self.xp.zeros_like(ss_term, dtype=np.float32)
             valid = mse > 0
             f_stat[valid] = (ss_term[valid] / dfn) / mse[valid]
             f_stat_cpu = to_cpu(f_stat)
-            f_stats[col_slice, :] = f_stat_cpu
+            f_stats[term_idx, :] = f_stat_cpu
             p_value = stats.f.sf(f_stat_cpu, dfn=dfn, dfd=dfd)
-            p_values[col_slice, :] = p_value
+            p_values[term_idx, :] = p_value
 
         return FactorialAnovaModelResults(
             model=self,
             uncorr_pvals=p_values.reshape(img_shape),
-            fstats=f_stats.reshape(img_shape)
+            fstats=f_stats.reshape(img_shape),
+            term_names=term_names
         )
 
     def get_permuted_design_matrix(self) -> Any:
