@@ -1,5 +1,6 @@
 FactorialAnovaModel:
 
+- make this buildable on Mac by conditionally installing CuPy dependencies
 - add sphericity correction (and save these out as an image)
 - add cluster correction
 - write tests
