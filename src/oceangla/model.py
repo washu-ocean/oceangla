@@ -2160,7 +2160,7 @@ class FactorialAnovaModel(Model):
             b_sub = beta[col_slice]
             cov_sub = xtx_inv[col_slice, col_slice]
             dfn = b_sub.shape[0]
-            ss_term = self.xp.sum(b_sub * (self.xp.linalg.pinv(cov_sub) @ b_sub)), axis=0)
+            ss_term = self.xp.sum(b_sub * (self.xp.linalg.pinv(cov_sub) @ b_sub), axis=0)
             f_stat = np.zeros_like(ss_term, dtype=np.float32)
             valid = mse > 0
             f_stat[valid] = (ss_term[valid] / dfn) / mse[valid]
