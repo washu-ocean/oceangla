@@ -171,6 +171,19 @@ def run_model(
             results = model.fit()
             results.save()
             apply_corrections(results, vol_method)
+        case "factorial_anova":
+            if (num_args := len(model_spec.function_args)) < 2:
+                raise ValueError(
+                    "Function factorial_anova() must take at least 2 arguments, "
+                    "which should be names associated with ANOVA groups. For example, "
+                    "you can group 2 sets of assumed-response variables like: `oceangla ... "
+                    "--anova-group group1 condA condB --anova-group group2 condC condD ... "
+                    "--model-name 'example_anova' --model 'factorial_anova(group1, group2)'`. "
+                )
+            model = AssumedFactorialAnova(model_spec, firstlevel_contrasts_df, subject_variables_df)
+            results = model.fit()
+            results.save()
+            apply_corrections(results, vol_method)
         case _:
             raise ValueError(f"Unknown function or model type {model_spec.model_type}.")
 
@@ -1952,3 +1965,86 @@ def get_twoway_anova_design_df(
             design_df[interaction_name] = design_df[variable] * design_df[frame_no]
     design_df.insert(0, "subject", subj_series)
     return design_df, variable
+
+
+def get_assumed_factorial_anova_contrasts_img_and_design_df(
+    model_spec: ModelSpec,
+    firstlevel_contrasts_df: pd.DataFrame
+) -> tuple[nib.Cifti2Image | nib.Nifti1Image, pd.DataFrame]:
+    df_ = firstlevel_contrasts_df.copy()
+    for group, values in config.anova_groups.values():
+        # Use a capturing group (...) around the valid options
+        pattern = r"\b(" + "|".join(re.escape(v) for v in values) + r")\b"
+        df_[group] = df_["condition"].str.extract(pattern, expand=False)
+    # mask = pd.Series(True, index=firstlevel_contrasts_df.index)
+    # for values in config.anova_groups.values():
+    #     pattern = r"\b(?:" + "|".join(re.escape(v) for v in values) + r")\b"
+    #     mask &= firstlevel_contrasts_df["condition"].str.contains(pattern, regex=True, na=False)
+    group_cols = list(config.anova_groups.keys())
+    result_df = (
+        df_
+        .dropna(subset=group_cols)
+        .sort_values(by=["subject", "condition"])
+        .query(
+            "frame_no == -1 and "
+            "task == @model_spec.task and "
+            "space == @model_spec.space and "
+            "session == @model_spec.session"
+        )
+        [["subject", "path"] + group_cols]
+        .reset_index(drop=True)
+    )
+    design_df = dmatrix(
+        " * ".join([f"C({group} Sum)" for group in group_cols]),
+        data=result_df[group_cols],
+        return_type="dataframe"
+    )
+    img_paths = result_df["path"].to_list()
+    img0 = nib.load(img_paths[0])
+    if isinstance(img0, nib.Cifti2Image):
+        fdata_stacked = np.empty(
+            (len(img_paths), img0.shape[1]),
+            dtype=np.float32
+        )
+        for i in tqdm(range(len(img_paths)), desc="Stacking contrast maps..."):
+            fdata_stacked[i, :] = nib.load(img_paths[i]).get_fdata(dtype=np.float32)
+        stacked_img = nib.Cifti2Image(
+            fdata_stacked,
+            header=(
+                ScalarAxis(name=["row"] * len(img_paths)),
+                img0.header.get_axis(1)
+            ),
+            nifti_header = img0.nifti_header
+        )
+        return (stacked_img, design_df)
+    elif isinstance(img0, nib.Cifti2Image):
+        fdata_stacked = np.empty((*img0.shape[:3], len(img_paths)), dtype=np.float32)
+        for i in tqdm(range(len(img_paths)), desc="Stacking contrast maps..."):
+            fdata_stacked[..., i] = nib.load(img_paths[i]).get_fdata(dtype=np.float32)
+        stacked_img = nib.Nifti1Image(
+            fdata_stacked,
+            affine=img0.affine,
+            header=img0.header
+        )
+        return (stacked_img, design_df)
+
+
+class FactorialAnovaModel(Model):
+    def __init__(
+        self,
+        model_spec: ModelSpec,
+        firstlevel_contrasts_df: pd.DataFrame,
+        subject_variables_df: pd.DataFrame,
+        **kwargs
+    ):
+        self.model_spec = model_spec
+        self.firstlevel_contrasts_df = firstlevel_contrasts_df
+        self.subject_variables_df = subject_variables_df
+        self._setup_outdir()
+
+        get_img_fn = get_assumed_factorial_anova_img_and_design_df
+
+
+
+class FactorialAnovaModelResults(ModelResults):
+    pass
