@@ -180,7 +180,7 @@ def run_model(
                     "--anova-group group1 condA condB --anova-group group2 condC condD ... "
                     "--model-name 'example_anova' --model 'factorial_anova(group1, group2)'`. "
                 )
-            model = AssumedFactorialAnova(model_spec, firstlevel_contrasts_df, subject_variables_df)
+            model = FactorialAnovaModel(model_spec, firstlevel_contrasts_df, subject_variables_df)
             results = model.fit()
             results.save()
             apply_corrections(results, vol_method)
