@@ -1972,7 +1972,8 @@ def get_assumed_factorial_anova_contrasts_img_and_design_df(
     firstlevel_contrasts_df: pd.DataFrame
 ) -> tuple[nib.Cifti2Image | nib.Nifti1Image, pd.DataFrame]:
     df_ = firstlevel_contrasts_df.copy()
-    for group, values in config.anova_groups.values():
+    breakpoint()
+    for group, values in config.anova_groups.items():
         # Use a capturing group (...) around the valid options
         pattern = r"\b(" + "|".join(re.escape(v) for v in values) + r")\b"
         df_[group] = df_["condition"].str.extract(pattern, expand=False)
