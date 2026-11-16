@@ -1972,7 +1972,6 @@ def get_assumed_factorial_anova_contrasts_img_and_design_df(
     firstlevel_contrasts_df: pd.DataFrame
 ) -> tuple[nib.Cifti2Image | nib.Nifti1Image, pd.DataFrame]:
     df_ = firstlevel_contrasts_df.copy()
-    breakpoint()
     for group, values in config.anova_groups.items():
         # Use a capturing group (...) around the valid options
         pattern = r"\b(" + "|".join(re.escape(v) for v in values) + r")\b"
@@ -2155,7 +2154,9 @@ class FactorialAnovaModel(Model):
         f_stats[0, :] = 0
         p_values = np.empty(Y.shape, dtype=np.float32)
         p_values[0, :] = 1
-        for col_slice in glm_input_shape[0][1:]:  # 1: excludes grand mean
+        for col_slice in range(glm_input_shape[0]):
+            if col_slice == 0:
+                continue
             b_sub = beta[col_slice]
             cov_sub = xtx_inv[col_slice, col_slice]
             dfn = b_sub.shape[0]
