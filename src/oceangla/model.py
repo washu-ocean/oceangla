@@ -2081,7 +2081,7 @@ class FactorialAnovaModelResults(ModelResults):
                 img = nib.cifti2.cifti2.Cifti2Image(
                     data,
                     (
-                        nib.cifti2.cifti2_axes.ScalarAxis(name=term_names),
+                        nib.cifti2.cifti2_axes.ScalarAxis(name=self.term_names),
                         self.model.contrasts_img.header.get_axis(1),
                     ),
                 )
