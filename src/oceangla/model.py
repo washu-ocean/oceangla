@@ -1992,9 +1992,19 @@ def get_assumed_factorial_anova_contrasts_img_and_design_df(
             "space == @model_spec.space and "
             "session == @model_spec.session"
         )
-        [["subject", "path"] + group_cols]
+        [["subject", "path", "condition"] + group_cols]
         .reset_index(drop=True)
     )
+    n_conditions = result_df["condition"].nunique()
+    result_df_ = result_df[
+        result_df.groupby("subject")["condition"].transform("nunique") == n_conditions
+    ].reset_index(drop=True)
+    subs_not_included = sorted(set(result_df["subject"]) - set(result_df_["subject"]))
+    if len(subs_not_included) > 0:
+        logger.warning("Some subjects missing one or more conditions weren't included in the analyses. These include: "
+                       f"{', '.join(subs_not_included)}")
+    result_df = result_df_.copy()
+    del result_df_
     design_df = dmatrix(
         " * ".join([f"C({group}, Sum)" for group in group_cols]),
         data=result_df[group_cols],
