@@ -1317,6 +1317,8 @@ class TwoWayAnovaModel(Model):
             "separate_null_by_parameter", getattr(config, "separate_null_by_parameter", False)
         )
 
+        self.__Y = None
+
     def _maybe_smooth_cifti(self):
         if isinstance(self.contrasts_img, nib.Cifti2Image) and hasattr(self.contrasts_img.header.get_axis(1), "vertex"):
             self.out_suffix = ".dscalar.nii"
@@ -1351,20 +1353,21 @@ class TwoWayAnovaModel(Model):
         else:
             raise ValueError(f"Cannot fit GLM for image type: {type(self.contrasts_img)}")
 
-        Y = xp.asarray(self.fdata.reshape(glm_input_shape))
+        if self.__Y is None:
+            self.__Y = xp.asarray(self.fdata.reshape(glm_input_shape))
         X_full = xp.asarray(design_matrix_arr)
         X_red = xp.asarray(design_matrix_arr_no_int)
 
-        beta, _, _, _ = xp.linalg.lstsq(X_full, Y, rcond=None)
-        beta_no_int, _, _, _ = xp.linalg.lstsq(X_red, Y, rcond=None)
-        rss_full = xp.sum((Y - X_full @ beta) ** 2, axis=0)
-        rss_reduced = xp.sum((Y - X_red @ beta_no_int) ** 2, axis=0)
+        beta, _, _, _ = xp.linalg.lstsq(X_full, self.__Y, rcond=None)
+        beta_no_int, _, _, _ = xp.linalg.lstsq(X_red, self.__Y, rcond=None)
+        rss_full = xp.sum((self.__Y - X_full @ beta) ** 2, axis=0)
+        rss_reduced = xp.sum((self.__Y - X_red @ beta_no_int) ** 2, axis=0)
         df_num = self.num_frames - 1
         df_denom = len(self.design_df) - design_matrix_arr.shape[1]
         fstat = ((rss_reduced - rss_full) / df_num) / (rss_full / df_denom)
 
         # Greenhouse-Geisser sphericity correction
-        res = (Y - (X_full @ beta)).reshape((-1, self.num_frames, beta.shape[-1]))
+        res = (self.__Y - (X_full @ beta)).reshape((-1, self.num_frames, beta.shape[-1]))
         n_subs = res.shape[0]
         k_frames = self.num_frames
         res_c = res - res.mean(axis=0, keepdims=True)
@@ -1426,14 +1429,14 @@ class TwoWayAnovaModel(Model):
             img_shape = (*self.fdata.shape[:3], 1)
             glm_input_shape = (self.fdata.shape[3], math.prod(self.fdata.shape[:3]))
 
-        Y = xp.asarray(self.fdata.reshape(glm_input_shape))
+        # Y = xp.asarray(self.fdata.reshape(glm_input_shape))
         X_full = xp.asarray(design_matrix.to_numpy())
         X_red = xp.asarray(design_matrix_no_int.to_numpy())
 
-        beta, _, _, _ = xp.linalg.lstsq(X_full, Y, rcond=None)
-        beta_no_int, _, _, _ = xp.linalg.lstsq(X_red, Y, rcond=None)
-        rss_full = xp.sum((Y - X_full @ beta) ** 2, axis=0)
-        rss_reduced = xp.sum((Y - X_red @ beta_no_int) ** 2, axis=0)
+        beta, _, _, _ = xp.linalg.lstsq(X_full, self.__Y, rcond=None)
+        beta_no_int, _, _, _ = xp.linalg.lstsq(X_red, self.__Y, rcond=None)
+        rss_full = xp.sum((self.__Y - X_full @ beta) ** 2, axis=0)
+        rss_reduced = xp.sum((self.__Y - X_red @ beta_no_int) ** 2, axis=0)
         df_num = self.num_frames - 1
         df_denom = len(design_matrix) - X_full.shape[1]
         fstat = ((rss_reduced - rss_full) / df_num) / (rss_full / df_denom)
@@ -1453,14 +1456,14 @@ class TwoWayAnovaModel(Model):
             img_shape = (*self.fdata.shape[:3], 1)
             glm_input_shape = (self.fdata.shape[3], math.prod(self.fdata.shape[:3]))
 
-        Y = xp.asarray(self.fdata.reshape(glm_input_shape))
+        # self.__Y = xp.asarray(self.fdata.reshape(glm_input_shape))
         X_full = xp.asarray(design_matrix.to_numpy())
         X_red = xp.asarray(design_matrix_no_int.to_numpy())
 
-        beta, _, _, _ = xp.linalg.lstsq(X_full, Y, rcond=None)
-        beta_no_int, _, _, _ = xp.linalg.lstsq(X_red, Y, rcond=None)
-        rss_full = xp.sum((Y - X_full @ beta) ** 2, axis=0)
-        rss_reduced = xp.sum((Y - X_red @ beta_no_int) ** 2, axis=0)
+        beta, _, _, _ = xp.linalg.lstsq(X_full, self.__Y, rcond=None)
+        beta_no_int, _, _, _ = xp.linalg.lstsq(X_red, self.__Y, rcond=None)
+        rss_full = xp.sum((self.__Y - X_full @ beta) ** 2, axis=0)
+        rss_reduced = xp.sum((self.__Y - X_red @ beta_no_int) ** 2, axis=0)
         df_num = self.num_frames - 1
         df_denom = len(design_matrix) - X_full.shape[1]
         fstat = ((rss_reduced - rss_full) / df_num) / (rss_full / df_denom)
