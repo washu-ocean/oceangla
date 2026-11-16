@@ -2170,7 +2170,14 @@ class FactorialAnovaModel(Model):
         xtx_inv = self.xp.linalg.pinv(X.T @ X)
 
         term_indices = get_term_column_indices(self.design_df)
-        term_names = self.design_df.columns
+        term_names = [
+            re.sub(r'C\(', '',
+                re.sub(r' Sum\)', '',
+                    re.sub(r'\[[^\]]\]', '', term_name)
+                )
+            )
+            for term_name in self.design_df.columns
+        ]
         f_stats = np.empty((len(term_names), Y.shape[1]), dtype=np.float32)
         f_stats[0, :] = 0
         p_values = np.empty((len(term_names), Y.shape[1]), dtype=np.float32)
