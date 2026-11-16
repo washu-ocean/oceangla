@@ -1996,7 +1996,7 @@ def get_assumed_factorial_anova_contrasts_img_and_design_df(
         .reset_index(drop=True)
     )
     design_df = dmatrix(
-        " * ".join([f"C({group} Sum)" for group in group_cols]),
+        " * ".join([f"C({group}, Sum)" for group in group_cols]),
         data=result_df[group_cols],
         return_type="dataframe"
     )
