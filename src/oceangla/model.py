@@ -13,6 +13,7 @@ from collections import defaultdict, OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Union, Tuple, Any
+from concurrent.futures import ThreadPoolExecutor
 
 import matplotlib.pyplot as plt
 import nibabel as nib
@@ -37,6 +38,7 @@ from .surface_utils import (
     get_template_midthicknesses_from_cifti_header,
     get_template_midthickness_paths_from_cifti_header,
 )
+from .threading import get_optimal_workers
 from .volume_utils import (
     get_volume_array_from_cifti_array,
     get_biggest_voxel_cluster_sizes,
@@ -2016,8 +2018,20 @@ def get_assumed_factorial_anova_contrasts_img_and_design_df(
             (len(img_paths), img0.shape[1]),
             dtype=np.float32
         )
-        for i in tqdm(range(len(img_paths)), desc="Stacking contrast maps..."):
-            fdata_stacked[i, :] = nib.load(img_paths[i]).get_fdata(dtype=np.float32)
+        # Concurrently load first-level maps
+        def _load_slice(idx_and_path: tuple[int, str]) -> None:
+            idx, path = idx_and_path
+            img = nib.load(path)
+            fdata_stacked[idx, :] = img.get_fdata(dtype=np.float32)
+        with ThreadPoolExecutor(
+            max_workers=get_optimal_workers(img_paths[0], is_compressed=False)
+        ) as executor:
+            for _ in tqdm(
+                executor.map(_load_slice, enumerate(img_paths)),
+                total=len(img_paths),
+                desc="Stacking contrast maps..."
+            ):
+                pass
         stacked_img = nib.Cifti2Image(
             fdata_stacked,
             header=(
