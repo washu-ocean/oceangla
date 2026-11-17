@@ -3,6 +3,7 @@ import logging
 from argparse import Action, ArgumentParser, ArgumentTypeError, RawTextHelpFormatter
 from pathlib import Path
 from textwrap import dedent
+from typing import Sequence
 
 from joblib import Memory
 from tomlkit import aot, document, dumps, item, loads, table
@@ -16,6 +17,11 @@ logger = logging.getLogger(__name__)
 
 class AnovaGroupAction(Action):
     def __call__(self, parser, namespace, values, option_string=None):
+        if not isinstance(values, Sequence):
+            parser.error(
+                f"argument {option_string}: expected Sequence of values "
+                f"(GROUP_NAME MEMBER1 MEMBER2 ...), got {type(values).__name__}"
+            )
         if len(values) < 3:
             parser.error(
                 f"argument {option_string}: expected at least 3 arguments "
@@ -28,7 +34,7 @@ class AnovaGroupAction(Action):
             groups = {}
             setattr(namespace, self.dest, groups)
 
-        group_name, *members = values
+        group_name, *members = [v.lower() for v in values]
         groups[group_name] = members
 
 

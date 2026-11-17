@@ -121,6 +121,33 @@ def test_tfce_flag_activation(parser, tmp_dirs, tfce_flag):
     assert args.tfce is True
 
 
+@pytest.mark.parametrize("vals,attr,expected_groupname,expected_members", [
+    (["group1", "member1", "member2"], "anova_groups", "group1", ["member1", "member2"]),
+    (["GrouP1", "MeMber1", "memBer2"], "anova_groups", "group1", ["member1", "member2"]),
+])
+def test_anova_group_flag(parser, tmp_dirs, vals, attr, expected_groupname, expected_members):
+    args = parser.parse_args([
+        "-f", str(tmp_dirs["fladir"]),
+        "-o", str(tmp_dirs["outdir"]),
+        "--anova-group", *vals,
+    ])
+    assert getattr(args, attr).get(expected_groupname) == expected_members
+
+
+@pytest.mark.parametrize("vals", [
+    ([]),
+    (["group1"]),
+    (["GrouP1", "MeMber1"]),
+])
+def test_anova_group_invalid(parser, tmp_dirs, vals):
+    with pytest.raises(SystemExit):
+        parser.parse_args([
+            "-f", str(tmp_dirs["fladir"]),
+            "-o", str(tmp_dirs["outdir"]),
+            "--anova-group", *vals,
+        ])
+
+
 @pytest.mark.parametrize("flag,val,attr,expected", [
     ("--tfce-h", "1.5", "tfce_h", 1.5),
     ("--tfce_h", "3.0", "tfce_h", 3.0),
