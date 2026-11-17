@@ -9,6 +9,7 @@ import pandas as pd
 from .formula import FormulaParser
 from .config import config
 from .model import ModelSpec
+from .utils import camel_to_kebab
 
 
 logger = logging.getLogger(__name__)
@@ -178,6 +179,7 @@ def populate_firstlevel_contrasts_tsv(
 
     rows = list(filter(None, rows))
     df = pd.DataFrame(rows)
+    df["condition"] = df["condition"].apply(camel_to_kebab) # Replace camelCase with kebab-case in newer oceanfla
     df.to_csv(firstlevel_contrasts_tsv_path, sep="\t", index=False)
     return firstlevel_contrasts_tsv_path
 
