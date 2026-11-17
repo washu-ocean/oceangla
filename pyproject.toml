@@ -9,7 +9,6 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "cupy-cuda12x[ctk]>=14.2.0",
     "matplotlib>=3.11.1",
     "nibabel>=5.4.2",
     "nilearn>=0.13.1",
@@ -27,6 +26,16 @@ dependencies = [
 [project.scripts]
 oceangla = "oceangla.main:main"
 
+[project.optional-dependencies]
+cu12 = [
+    "cupy-cuda12x[ctk]>=14.2.0; sys_platform == 'linux'",
+    "cudf-cu12==26.10.*; sys_platform == 'linux'",
+]
+cu13 = [
+    "cupy-cuda13x[ctk]>=14.2.0; sys_platform == 'linux'",
+    "cudf-cu13==26.10.*; sys_platform == 'linux'",
+]
+
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
@@ -42,6 +51,18 @@ docs = [
     "sphinx>=9.0.4",
     "sphinx-autobuild>=2025.8.25",
     "sphinx-rtd-theme>=3.1.0",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cu12" },
+        { extra = "cu13" },
+    ],
+]
+environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin'",
 ]
 
 [tool.pdm.version]
