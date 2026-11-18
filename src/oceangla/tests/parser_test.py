@@ -359,6 +359,12 @@ def test_standardization_method_invalid(parser, tmp_dirs):
 # ===========================================================================
 
 def test_reindex_flags(parser, tmp_dirs):
+    args0 = parser.parse_args([
+        "-f", str(tmp_dirs["fladir"]),
+        "-o", str(tmp_dirs["outdir"]),
+    ])
+    assert args0.reindex is False # this should be default
+
     args1 = parser.parse_args([
         "-f", str(tmp_dirs["fladir"]),
         "-o", str(tmp_dirs["outdir"]),
