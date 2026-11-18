@@ -17,7 +17,7 @@ class config:  # All attributes are set in parser.py parse_args()
     model_file: Path | None = None
     model_names: list[str] = []
     outdir_path: Path = None
-    reindex: bool = False
+    reindex: bool = True
     perms: int = 0
     preprocdir_paths: list[Path] | None = None
     separate_null_by_hemisphere: bool = True
