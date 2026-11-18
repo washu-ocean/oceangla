@@ -146,6 +146,7 @@ def _get_parser():
         help="Don't recreate the sqlite database of first-level outputs if one "
         "already exists."
     )
+    parser.set_defaults(reindex=True)
     parser.add_argument(
         "-c", "--config", type=Path, help="Path to a config .toml file."
     )

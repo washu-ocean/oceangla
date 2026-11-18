@@ -363,7 +363,7 @@ def test_reindex_flags(parser, tmp_dirs):
         "-f", str(tmp_dirs["fladir"]),
         "-o", str(tmp_dirs["outdir"]),
     ])
-    assert args0.reindex is False # this should be default
+    assert args0.reindex is True # this should be default
 
     args1 = parser.parse_args([
         "-f", str(tmp_dirs["fladir"]),
